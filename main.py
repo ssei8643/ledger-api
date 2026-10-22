@@ -3,7 +3,7 @@ from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import CheckConstraint, Date, ForeignKey, String, create_engine, select
+from sqlalchemy import CheckConstraint, Date, ForeignKey, String, case, create_engine, func, select
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -135,3 +135,51 @@ def get_journal_entry(entry_id: int, db: Session = Depends(get_db)):
     if entry is None:
         raise HTTPException(status_code=404, detail="仕訳が見つかりません")
     return entry
+
+# ===== 試算表 =====
+class TrialBalanceRow(BaseModel):
+    account: str
+    debit_total: int
+    credit_total: int
+    debit_balance: int
+    credit_balance: int
+
+
+class TrialBalance(BaseModel):
+    rows: list[TrialBalanceRow]
+    debit_total: int
+    credit_total: int
+    is_balanced: bool
+
+
+@app.get("/trial-balance", response_model=TrialBalance)
+def get_trial_balance(db: Session = Depends(get_db)):
+    debit_sum = func.sum(case((JournalLine.side == "debit", JournalLine.amount), else_=0))
+    credit_sum = func.sum(case((JournalLine.side == "credit", JournalLine.amount), else_=0))
+    stmt = (
+        select(JournalLine.account, debit_sum, credit_sum)
+        .group_by(JournalLine.account)
+        .order_by(JournalLine.account)
+    )
+
+    rows = []
+    for account, debit, credit in db.execute(stmt).all():
+        diff = debit - credit
+        rows.append(
+            TrialBalanceRow(
+                account=account,
+                debit_total=debit,
+                credit_total=credit,
+                debit_balance=max(diff, 0),
+                credit_balance=max(-diff, 0),
+            )
+        )
+
+    debit_total = sum(r.debit_total for r in rows)
+    credit_total = sum(r.credit_total for r in rows)
+    return TrialBalance(
+        rows=rows,
+        debit_total=debit_total,
+        credit_total=credit_total,
+        is_balanced=debit_total == credit_total,
+    )
