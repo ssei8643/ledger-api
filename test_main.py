@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from main import Base, app, get_db
+from main import Base, app, get_db, seed_accounts
 
 
 # ===== テストの準備：毎回まっさらなメモリ上のDBを使う =====
@@ -17,6 +17,8 @@ def client():
     )
     Base.metadata.create_all(test_engine)
     TestSession = sessionmaker(bind=test_engine)
+    with TestSession() as db:
+        seed_accounts(db)
 
     def override_get_db():
         with TestSession() as db:

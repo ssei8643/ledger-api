@@ -14,7 +14,7 @@ from sqlalchemy.orm import (
     sessionmaker,
 )
 
-# ===== 数据库连接 =====
+# ===== データベース接続 =====
 engine = create_engine("sqlite:///./ledger.db", connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine)
 
@@ -23,7 +23,44 @@ class Base(DeclarativeBase):
     pass
 
 
-# ===== 数据库表 =====
+# ===== 勘定科目マスタ =====
+# 分類ごとに、残高が本来どちら側に出るか
+CATEGORY_NORMAL_SIDE = {
+    "資産": "debit",
+    "負債": "credit",
+    "純資産": "credit",
+    "収益": "credit",
+    "費用": "debit",
+}
+CATEGORY_ORDER = list(CATEGORY_NORMAL_SIDE)
+
+DEFAULT_ACCOUNTS = [
+    ("現金", "資産"),
+    ("普通預金", "資産"),
+    ("売掛金", "資産"),
+    ("事業主貸", "資産"),
+    ("買掛金", "負債"),
+    ("未払金", "負債"),
+    ("元入金", "純資産"),
+    ("事業主借", "純資産"),
+    ("売上高", "収益"),
+    ("仕入高", "費用"),
+    ("消耗品費", "費用"),
+    ("支払手数料", "費用"),
+    ("通信費", "費用"),
+    ("旅費交通費", "費用"),
+]
+
+
+class Account(Base):
+    """勘定科目"""
+    __tablename__ = "accounts"
+
+    name: Mapped[str] = mapped_column(String(50), primary_key=True)
+    category: Mapped[str] = mapped_column(String(10))
+
+
+# ===== 仕訳 =====
 class JournalEntry(Base):
     """仕訳本体"""
     __tablename__ = "journal_entries"
@@ -50,10 +87,27 @@ class JournalLine(Base):
     entry: Mapped[JournalEntry] = relationship(back_populates="lines")
 
 
+def seed_accounts(db: Session) -> None:
+    """初期の勘定科目を登録（登録済みのものはスキップ）"""
+    existing = set(db.scalars(select(Account.name)))
+    for name, category in DEFAULT_ACCOUNTS:
+        if name not in existing:
+            db.add(Account(name=name, category=category))
+    db.commit()
+
+
 Base.metadata.create_all(engine)
+with SessionLocal() as _db:
+    seed_accounts(_db)
 
 
-# ===== 请求和响应的格式 =====
+# ===== リクエスト・レスポンスの形式 =====
+class AccountOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    name: str
+    category: str
+
+
 class JournalLineIn(BaseModel):
     account: str
     side: Literal["debit", "credit"]
@@ -89,7 +143,25 @@ class JournalEntryOut(BaseModel):
     lines: list[JournalLineOut]
 
 
-# ===== 应用和接口 =====
+class TrialBalanceRow(BaseModel):
+    account: str
+    category: str
+    debit_total: int
+    credit_total: int
+    debit_balance: int
+    credit_balance: int
+    warning: str | None = None
+
+
+class TrialBalance(BaseModel):
+    rows: list[TrialBalanceRow]
+    debit_total: int
+    credit_total: int
+    is_balanced: bool
+    warning_count: int
+
+
+# ===== アプリとAPI =====
 app = FastAPI()
 
 
@@ -103,8 +175,21 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/accounts", response_model=list[AccountOut])
+def list_accounts(db: Session = Depends(get_db)):
+    accounts = db.scalars(select(Account)).all()
+    return sorted(accounts, key=lambda a: (CATEGORY_ORDER.index(a.category), a.name))
+
+
 @app.post("/journal-entries", status_code=201, response_model=JournalEntryOut)
 def create_journal_entry(payload: JournalEntryCreate, db: Session = Depends(get_db)):
+    # 未登録の勘定科目が含まれていないか確認
+    names = {l.account for l in payload.lines}
+    known = set(db.scalars(select(Account.name).where(Account.name.in_(names))))
+    unknown = sorted(names - known)
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"未登録の勘定科目です: {', '.join(unknown)}")
+
     entry = JournalEntry(
         entry_date=payload.entry_date,
         description=payload.description,
@@ -136,45 +221,42 @@ def get_journal_entry(entry_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="仕訳が見つかりません")
     return entry
 
-# ===== 試算表 =====
-class TrialBalanceRow(BaseModel):
-    account: str
-    debit_total: int
-    credit_total: int
-    debit_balance: int
-    credit_balance: int
-
-
-class TrialBalance(BaseModel):
-    rows: list[TrialBalanceRow]
-    debit_total: int
-    credit_total: int
-    is_balanced: bool
-
 
 @app.get("/trial-balance", response_model=TrialBalance)
 def get_trial_balance(db: Session = Depends(get_db)):
     debit_sum = func.sum(case((JournalLine.side == "debit", JournalLine.amount), else_=0))
     credit_sum = func.sum(case((JournalLine.side == "credit", JournalLine.amount), else_=0))
     stmt = (
-        select(JournalLine.account, debit_sum, credit_sum)
-        .group_by(JournalLine.account)
-        .order_by(JournalLine.account)
+        select(JournalLine.account, Account.category, debit_sum, credit_sum)
+        .join(Account, Account.name == JournalLine.account)
+        .group_by(JournalLine.account, Account.category)
     )
 
     rows = []
-    for account, debit, credit in db.execute(stmt).all():
+    for account, category, debit, credit in db.execute(stmt).all():
         diff = debit - credit
+        normal_side = CATEGORY_NORMAL_SIDE[category]
+
+        # 本来と逆側に残高が出ていれば警告
+        warning = None
+        if normal_side == "debit" and diff < 0:
+            warning = f"{category}の科目が貸方残高になっています"
+        elif normal_side == "credit" and diff > 0:
+            warning = f"{category}の科目が借方残高になっています"
+
         rows.append(
             TrialBalanceRow(
                 account=account,
+                category=category,
                 debit_total=debit,
                 credit_total=credit,
                 debit_balance=max(diff, 0),
                 credit_balance=max(-diff, 0),
+                warning=warning,
             )
         )
 
+    rows.sort(key=lambda r: (CATEGORY_ORDER.index(r.category), r.account))
     debit_total = sum(r.debit_total for r in rows)
     credit_total = sum(r.credit_total for r in rows)
     return TrialBalance(
@@ -182,4 +264,5 @@ def get_trial_balance(db: Session = Depends(get_db)):
         debit_total=debit_total,
         credit_total=credit_total,
         is_balanced=debit_total == credit_total,
+        warning_count=sum(1 for r in rows if r.warning),
     )
