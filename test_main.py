@@ -99,4 +99,50 @@ def test_試算表の借方合計と貸方合計が一致する(client):
 
     balances = {r["account"]: r for r in tb["rows"]}
     assert balances["普通預金"]["debit_balance"] == 10780
-    assert balances["売掛金"]["credit_balance"] == 11000
+    assert balances["売掛金"]["credit_balance"] == 11000# ===== 勘定科目マスタと残高警告のテスト =====
+OPENING_ENTRY = {
+    "entry_date": "2026-10-01",
+    "description": "開始仕訳（期首残高）",
+    "lines": [
+        {"account": "現金", "side": "debit", "amount": 50000},
+        {"account": "売掛金", "side": "debit", "amount": 11000},
+        {"account": "元入金", "side": "credit", "amount": 61000},
+    ],
+}
+
+
+def test_未登録の勘定科目は拒否され保存もされない(client):
+    bad = {**SIMPLE_ENTRY, "lines": [
+        {"account": "消耗品費", "side": "debit", "amount": 1100},
+        {"account": "現全", "side": "credit", "amount": 1100},
+    ]}
+    res = client.post("/journal-entries", json=bad)
+    assert res.status_code == 422
+    assert "現全" in res.json()["detail"]
+    assert client.get("/journal-entries").json() == []
+
+
+def test_期首残高がないと資産の貸方残高に警告が出る(client):
+    client.post("/journal-entries", json=SIMPLE_ENTRY)
+    client.post("/journal-entries", json=COMPOUND_ENTRY)
+
+    tb = client.get("/trial-balance").json()
+    rows = {r["account"]: r for r in tb["rows"]}
+    assert tb["warning_count"] == 2
+    assert rows["現金"]["warning"] is not None
+    assert rows["売掛金"]["warning"] is not None
+    assert rows["消耗品費"]["warning"] is None
+
+
+def test_開始仕訳を登録すると警告が消える(client):
+    client.post("/journal-entries", json=SIMPLE_ENTRY)
+    client.post("/journal-entries", json=COMPOUND_ENTRY)
+    client.post("/journal-entries", json=OPENING_ENTRY)
+
+    tb = client.get("/trial-balance").json()
+    rows = {r["account"]: r for r in tb["rows"]}
+    assert tb["warning_count"] == 0
+    assert rows["現金"]["debit_balance"] == 48900
+    assert tb["debit_total"] == 73100
+    assert tb["credit_total"] == 73100
+    
