@@ -68,6 +68,7 @@ class JournalEntry(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     entry_date: Mapped[date] = mapped_column(Date)
     description: Mapped[str] = mapped_column(String(200))
+    reverses_id: Mapped[int | None] = mapped_column(ForeignKey("journal_entries.id"), unique=True, default=None)
     lines: Mapped[list["JournalLine"]] = relationship(back_populates="entry")
 
 
@@ -141,6 +142,7 @@ class JournalEntryOut(BaseModel):
     entry_date: date
     description: str
     lines: list[JournalLineOut]
+    reverses_id: int | None = None
 
 
 class TrialBalanceRow(BaseModel):
@@ -266,3 +268,38 @@ def get_trial_balance(db: Session = Depends(get_db)):
         is_balanced=debit_total == credit_total,
         warning_count=sum(1 for r in rows if r.warning),
     )
+    
+    
+# ===== 訂正仕訳（取消） =====
+class ReverseRequest(BaseModel):
+    entry_date: date
+    reason: str = Field(min_length=1, max_length=100)
+
+
+@app.post("/journal-entries/{entry_id}/reverse", status_code=201, response_model=JournalEntryOut)
+def reverse_journal_entry(entry_id: int, payload: ReverseRequest, db: Session = Depends(get_db)):
+    original = db.get(JournalEntry, entry_id)
+    if original is None:
+        raise HTTPException(status_code=404, detail="仕訳が見つかりません")
+    if original.reverses_id is not None:
+        raise HTTPException(status_code=422, detail="取消仕訳をさらに取り消すことはできません")
+
+    already = db.scalar(select(JournalEntry.id).where(JournalEntry.reverses_id == entry_id))
+    if already is not None:
+        raise HTTPException(status_code=409, detail=f"この仕訳はすでに仕訳#{already}で取り消されています")
+
+    # 借方と貸方を入れ替えた仕訳を作る
+    opposite = {"debit": "credit", "credit": "debit"}
+    reversal = JournalEntry(
+        entry_date=payload.entry_date,
+        description=f"【取消】仕訳#{entry_id}：{payload.reason}",
+        reverses_id=entry_id,
+        lines=[
+            JournalLine(account=l.account, side=opposite[l.side], amount=l.amount)
+            for l in original.lines
+        ],
+    )
+    db.add(reversal)
+    db.commit()
+    db.refresh(reversal)
+    return reversal
