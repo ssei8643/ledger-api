@@ -146,3 +146,41 @@ def test_開始仕訳を登録すると警告が消える(client):
     assert tb["debit_total"] == 73100
     assert tb["credit_total"] == 73100
     
+
+# ===== 訂正仕訳のテスト =====
+REVERSE_REQUEST = {"entry_date": "2026-10-28", "reason": "金額誤り"}
+
+
+def test_仕訳を取り消すと借貸が逆の仕訳が作られる(client):
+    client.post("/journal-entries", json=SIMPLE_ENTRY)
+    res = client.post("/journal-entries/1/reverse", json=REVERSE_REQUEST)
+    assert res.status_code == 201
+    body = res.json()
+    assert body["reverses_id"] == 1
+    sides = {l["account"]: l["side"] for l in body["lines"]}
+    assert sides == {"消耗品費": "credit", "現金": "debit"}
+
+
+def test_取り消すと残高は元に戻り元の仕訳は残る(client):
+    client.post("/journal-entries", json=SIMPLE_ENTRY)
+    client.post("/journal-entries/1/reverse", json=REVERSE_REQUEST)
+
+    tb = client.get("/trial-balance").json()
+    rows = {r["account"]: r for r in tb["rows"]}
+    assert rows["消耗品費"]["debit_balance"] == 0
+    assert rows["消耗品費"]["credit_balance"] == 0
+    assert client.get("/journal-entries/1").status_code == 200
+
+
+def test_同じ仕訳は二重に取り消せない(client):
+    client.post("/journal-entries", json=SIMPLE_ENTRY)
+    client.post("/journal-entries/1/reverse", json=REVERSE_REQUEST)
+    res = client.post("/journal-entries/1/reverse", json=REVERSE_REQUEST)
+    assert res.status_code == 409
+
+
+def test_取消仕訳はさらに取り消せない(client):
+    client.post("/journal-entries", json=SIMPLE_ENTRY)
+    client.post("/journal-entries/1/reverse", json=REVERSE_REQUEST)
+    res = client.post("/journal-entries/2/reverse", json=REVERSE_REQUEST)
+    assert res.status_code == 422
