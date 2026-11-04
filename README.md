@@ -12,9 +12,10 @@
 - 借方合計と貸方合計が一致しない仕訳の自動拒否
 - 勘定科目マスタ（未登録の科目を使った仕訳は拒否）
 - 合計残高試算表の作成
+- 総勘定元帳（科目ごとの増減と残高の推移）
 - 残高が本来と逆側になった科目の警告（例：資産の科目が貸方残高になった場合）
 - 訂正仕訳（登録済みの仕訳は変更せず、借貸を逆にした取消仕訳で訂正）
-- 自動テスト（pytest、13件）
+- 自動テスト（pytest、16件）
 
 ## 技術スタック
 
@@ -47,6 +48,7 @@ Python 3.13 / FastAPI / Pydantic / SQLAlchemy 2.0 / SQLite / pytest / uv
 | GET | /journal-entries/{id} | 仕訳の詳細 |
 | POST | /journal-entries/{id}/reverse | 仕訳の取消（訂正仕訳の作成） |
 | GET | /trial-balance | 合計残高試算表（残高の警告つき） |
+| GET | /accounts/{name}/ledger | 総勘定元帳 |
 
 ## 起動方法
 

@@ -303,3 +303,51 @@ def reverse_journal_entry(entry_id: int, payload: ReverseRequest, db: Session = 
     db.commit()
     db.refresh(reversal)
     return reversal
+
+# ===== 総勘定元帳 =====
+class LedgerRow(BaseModel):
+    entry_id: int
+    entry_date: date
+    description: str
+    debit: int
+    credit: int
+    balance: int
+
+
+@app.get("/accounts/{account_name}/ledger", response_model=list[LedgerRow])
+def get_ledger(account_name: str, db: Session = Depends(get_db)):
+    # 科目が存在しなければ404
+    account = db.get(Account, account_name)
+    if account is None:
+        raise HTTPException(status_code=404, detail="勘定科目が見つかりません")
+
+    # この科目の明細を、仕訳の日付順に取得（本体と明細を結合）
+    stmt = (
+        select(JournalLine, JournalEntry)
+        .join(JournalEntry, JournalLine.entry_id == JournalEntry.id)
+        .where(JournalLine.account == account_name)
+        .order_by(JournalEntry.entry_date, JournalEntry.id)
+    )
+
+    # 1行ずつ残高を計算（科目の分類によって増減の向きが変わる）
+    normal_side = CATEGORY_NORMAL_SIDE[account.category]
+    balance = 0
+    rows = []
+    for line, entry in db.execute(stmt).all():
+        debit = line.amount if line.side == "debit" else 0
+        credit = line.amount if line.side == "credit" else 0
+        if normal_side == "debit":
+            balance += debit - credit
+        else:
+            balance += credit - debit
+        rows.append(
+            LedgerRow(
+                entry_id=entry.id,
+                entry_date=entry.entry_date,
+                description=entry.description,
+                debit=debit,
+                credit=credit,
+                balance=balance,
+            )
+        )
+    return rows

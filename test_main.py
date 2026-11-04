@@ -184,3 +184,21 @@ def test_取消仕訳はさらに取り消せない(client):
     client.post("/journal-entries/1/reverse", json=REVERSE_REQUEST)
     res = client.post("/journal-entries/2/reverse", json=REVERSE_REQUEST)
     assert res.status_code == 422
+
+# ===== 総勘定元帳のテスト =====
+def test_総勘定元帳で残高の推移がわかる(client):
+    client.post("/journal-entries", json=OPENING_ENTRY)
+    client.post("/journal-entries", json=SIMPLE_ENTRY)
+    rows = client.get("/accounts/現金/ledger").json()
+    assert [r["balance"] for r in rows] == [50000, 48900]
+
+
+def test_貸方の科目は貸方で残高が増える(client):
+    client.post("/journal-entries", json=OPENING_ENTRY)
+    rows = client.get("/accounts/元入金/ledger").json()
+    assert rows[0]["credit"] == 61000
+    assert rows[0]["balance"] == 61000
+
+
+def test_存在しない科目の元帳は404を返す(client):
+    assert client.get("/accounts/現全/ledger").status_code == 404
