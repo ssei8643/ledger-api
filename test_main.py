@@ -202,3 +202,37 @@ def test_貸方の科目は貸方で残高が増える(client):
 
 def test_存在しない科目の元帳は404を返す(client):
     assert client.get("/accounts/現全/ledger").status_code == 404
+
+
+# ===== 損益計算書・貸借対照表のテスト =====
+SALES_ENTRY = {
+    "entry_date": "2026-11-05",
+    "description": "B社へ売上（掛け）",
+    "lines": [
+        {"account": "売掛金", "side": "debit", "amount": 33000},
+        {"account": "売上高", "side": "credit", "amount": 33000},
+    ],
+}
+
+
+def test_損益計算書で当期純利益が計算される(client):
+    client.post("/journal-entries", json=OPENING_ENTRY)
+    client.post("/journal-entries", json=SIMPLE_ENTRY)
+    client.post("/journal-entries", json=SALES_ENTRY)
+
+    pl = client.get("/financial-statements").json()["income_statement"]
+    assert pl["total_revenue"] == 33000
+    assert pl["total_expense"] == 1100
+    assert pl["net_income"] == 31900
+
+
+def test_貸借対照表は当期純利益を含めて左右が一致する(client):
+    client.post("/journal-entries", json=OPENING_ENTRY)
+    client.post("/journal-entries", json=SIMPLE_ENTRY)
+    client.post("/journal-entries", json=SALES_ENTRY)
+
+    bs = client.get("/financial-statements").json()["balance_sheet"]
+    assert bs["net_income"] == 31900
+    assert bs["total_assets"] == 92900
+    assert bs["total_liabilities_and_equity"] == 92900
+    assert bs["is_balanced"] is True

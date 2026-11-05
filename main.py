@@ -351,3 +351,84 @@ def get_ledger(account_name: str, db: Session = Depends(get_db)):
             )
         )
     return rows
+
+# ===== 損益計算書・貸借対照表 =====
+class StatementItem(BaseModel):
+    account: str
+    amount: int
+
+
+class IncomeStatement(BaseModel):
+    revenues: list[StatementItem]
+    expenses: list[StatementItem]
+    total_revenue: int
+    total_expense: int
+    net_income: int
+
+
+class BalanceSheet(BaseModel):
+    assets: list[StatementItem]
+    liabilities: list[StatementItem]
+    equity: list[StatementItem]
+    net_income: int
+    total_assets: int
+    total_liabilities_and_equity: int
+    is_balanced: bool
+
+
+class FinancialStatements(BaseModel):
+    income_statement: IncomeStatement
+    balance_sheet: BalanceSheet
+
+
+@app.get("/financial-statements", response_model=FinancialStatements)
+def get_financial_statements(db: Session = Depends(get_db)):
+    debit_sum = func.sum(case((JournalLine.side == "debit", JournalLine.amount), else_=0))
+    credit_sum = func.sum(case((JournalLine.side == "credit", JournalLine.amount), else_=0))
+    stmt = (
+        select(JournalLine.account, Account.category, debit_sum, credit_sum)
+        .join(Account, Account.name == JournalLine.account)
+        .group_by(JournalLine.account, Account.category)
+        .order_by(JournalLine.account)
+    )
+
+    # 科目ごとの残高を、本来残高が出る側を正として計算し、分類ごとにまとめる
+    groups = {category: [] for category in CATEGORY_ORDER}
+    for account, category, debit, credit in db.execute(stmt).all():
+        if CATEGORY_NORMAL_SIDE[category] == "debit":
+            amount = debit - credit
+        else:
+            amount = credit - debit
+        if amount != 0:
+            groups[category].append(StatementItem(account=account, amount=amount))
+
+    def total(items):
+        return sum(i.amount for i in items)
+
+    # 損益計算書：収益 − 費用 ＝ 当期純利益
+    total_revenue = total(groups["収益"])
+    total_expense = total(groups["費用"])
+    net_income = total_revenue - total_expense
+
+    # 貸借対照表：資産 ＝ 負債 ＋ 純資産 ＋ 当期純利益
+    total_assets = total(groups["資産"])
+    total_liabilities_and_equity = total(groups["負債"]) + total(groups["純資産"]) + net_income
+
+    return FinancialStatements(
+        income_statement=IncomeStatement(
+            revenues=groups["収益"],
+            expenses=groups["費用"],
+            total_revenue=total_revenue,
+            total_expense=total_expense,
+            net_income=net_income,
+        ),
+        balance_sheet=BalanceSheet(
+            assets=groups["資産"],
+            liabilities=groups["負債"],
+            equity=groups["純資産"],
+            net_income=net_income,
+            total_assets=total_assets,
+            total_liabilities_and_equity=total_liabilities_and_equity,
+            is_balanced=total_assets == total_liabilities_and_equity,
+        ),
+    )
