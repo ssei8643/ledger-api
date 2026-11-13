@@ -1,5 +1,6 @@
 from datetime import date
 from typing import Literal
+from fastapi.middleware.cors import CORSMiddleware
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -165,6 +166,12 @@ class TrialBalance(BaseModel):
 
 # ===== アプリとAPI =====
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def get_db():
