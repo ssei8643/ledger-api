@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 
 type Side = "debit" | "credit"
 
@@ -12,6 +12,11 @@ type Props = {
   onCreated: () => void
 }
 
+type Account = {
+  name: string
+  category: string
+}
+
 const API_URL = "http://127.0.0.1:8000"
 
 function emptyLine(side: Side): LineInput {
@@ -23,11 +28,20 @@ export default function JournalForm({ onCreated }: Props) {
   const [description, setDescription] = useState("")
   const [lines, setLines] = useState<LineInput[]>([emptyLine("debit"), emptyLine("credit")])
   const [message, setMessage] = useState<string | null>(null)
+    const [accounts, setAccounts] = useState<Account[]>([])
+
+  // 画面を開いたときに、バックエンドから勘定科目の一覧を取得
+  useEffect(() => {
+    fetch(`${API_URL}/accounts`)
+      .then((res) => res.json())
+      .then((json: Account[]) => setAccounts(json))
+  }, [])
 
   // 入力中の借方・貸方の合計（画面上でリアルタイムに計算）
   const debitTotal = lines.filter((l) => l.side === "debit").reduce((sum, l) => sum + l.amount, 0)
   const creditTotal = lines.filter((l) => l.side === "credit").reduce((sum, l) => sum + l.amount, 0)
   const isBalanced = debitTotal > 0 && debitTotal === creditTotal
+  const allSelected = lines.every((l) => l.account !== "")
 
   function updateLine(index: number, changes: Partial<LineInput>) {
     setLines(lines.map((l, i) => (i === index ? { ...l, ...changes } : l)))
@@ -88,11 +102,17 @@ export default function JournalForm({ onCreated }: Props) {
             <option value="debit">借方</option>
             <option value="credit">貸方</option>
           </select>
-          <input
-            placeholder="勘定科目"
+          <select
             value={l.account}
             onChange={(e) => updateLine(i, { account: e.target.value })}
-          />
+          >
+            <option value="">勘定科目を選択</option>
+            {accounts.map((a) => (
+              <option key={a.name} value={a.name}>
+                {a.name}（{a.category}）
+              </option>
+            ))}
+          </select>
           <input
             type="number"
             placeholder="金額"
@@ -112,7 +132,7 @@ export default function JournalForm({ onCreated }: Props) {
         {isBalanced ? "（一致）" : "（不一致）"}
       </p>
 
-      <button type="submit" disabled={!isBalanced}>登録</button>
+      <button type="submit" disabled={!isBalanced || !allSelected}>登録</button>
       {message && <p>{message}</p>}
     </form>
   )
