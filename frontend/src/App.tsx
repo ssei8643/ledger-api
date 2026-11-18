@@ -35,6 +35,16 @@ function App() {
       .catch((e) => setError(String(e)))
   }
 
+    async function loadDemoData() {
+    const res = await fetch(`${API_URL}/demo-data`, { method: "POST" })
+    if (res.ok) {
+      loadTrialBalance()
+    } else {
+      const body = await res.json()
+      alert(body.detail)
+    }
+  }
+
   useEffect(() => {
     loadTrialBalance()
   }, [])
@@ -42,6 +52,8 @@ function App() {
   return (
     <div>
       <h1>記帳アプリ</h1>
+
+            <button onClick={loadDemoData}>サンプルデータを読み込む</button>
 
       <JournalForm onCreated={loadTrialBalance} />
 

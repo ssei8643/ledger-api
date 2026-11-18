@@ -236,3 +236,19 @@ def test_貸借対照表は当期純利益を含めて左右が一致する(clie
     assert bs["total_assets"] == 92900
     assert bs["total_liabilities_and_equity"] == 92900
     assert bs["is_balanced"] is True
+
+    # ===== サンプルデータのテスト =====
+def test_サンプルデータを読み込むと財務諸表が作られる(client):
+    res = client.post("/demo-data")
+    assert res.status_code == 201
+    assert res.json()["created"] == 13
+
+    fs = client.get("/financial-statements").json()
+    assert fs["income_statement"]["net_income"] == 206420
+    assert fs["balance_sheet"]["total_assets"] == 556420
+    assert fs["balance_sheet"]["is_balanced"] is True
+
+
+def test_仕訳があるとサンプルデータは読み込めない(client):
+    client.post("/journal-entries", json=SIMPLE_ENTRY)
+    assert client.post("/demo-data").status_code == 409
