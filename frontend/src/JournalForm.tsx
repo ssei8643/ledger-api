@@ -17,6 +17,12 @@ type Account = {
   category: string
 }
 
+type JournalTemplate = {
+  name: string
+  description: string
+  lines: { account: string; side: Side }[]
+}
+
 const API_URL = "http://127.0.0.1:8000"
 
 function emptyLine(side: Side): LineInput {
@@ -36,6 +42,33 @@ export default function JournalForm({ onCreated }: Props) {
       .then((res) => res.json())
       .then((json: Account[]) => setAccounts(json))
   }, [])
+
+    const [templates, setTemplates] = useState<JournalTemplate[]>([])
+
+  // 画面を開いたときに、テンプレートの一覧を取得
+  useEffect(() => {
+    fetch(`${API_URL}/templates`)
+      .then((res) => res.json())
+      .then((json: JournalTemplate[]) => setTemplates(json))
+  }, [])
+
+  // テンプレートを選ぶと、摘要と科目・借貸を自動で入力
+  function applyTemplate(name: string) {
+    const t = templates.find((t) => t.name === name)
+    if (!t) return
+    setDescription(t.description)
+    setLines(t.lines.map((l) => ({ ...l, amount: 0 })))
+  }
+
+  // 借方1行・貸方1行の仕訳は必ず同額になるので、両方に反映する
+  function updateAmount(index: number, amount: number) {
+    const isSimple = lines.length === 2 && lines[0].side !== lines[1].side
+    if (isSimple) {
+      setLines(lines.map((l) => ({ ...l, amount })))
+    } else {
+      updateLine(index, { amount })
+    }
+  }
 
   // 入力中の借方・貸方の合計（画面上でリアルタイムに計算）
   const debitTotal = lines.filter((l) => l.side === "debit").reduce((sum, l) => sum + l.amount, 0)
@@ -85,6 +118,16 @@ export default function JournalForm({ onCreated }: Props) {
     <form onSubmit={handleSubmit}>
       <h2>仕訳の入力</h2>
       <div>
+        <select value="" onChange={(e) => applyTemplate(e.target.value)}>
+          <option value="">テンプレートから入力</option>
+          {templates.map((t) => (
+            <option key={t.name} value={t.name}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div>
         <input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} />
         <input
           placeholder="摘要"
@@ -117,7 +160,7 @@ export default function JournalForm({ onCreated }: Props) {
             type="number"
             placeholder="金額"
             value={l.amount || ""}
-            onChange={(e) => updateLine(i, { amount: Number(e.target.value) })}
+                        onChange={(e) => updateAmount(i, Number(e.target.value))}
           />
           {lines.length > 2 && (
             <button type="button" onClick={() => removeLine(i)}>削除</button>

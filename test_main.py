@@ -252,3 +252,13 @@ def test_サンプルデータを読み込むと財務諸表が作られる(clie
 def test_仕訳があるとサンプルデータは読み込めない(client):
     client.post("/journal-entries", json=SIMPLE_ENTRY)
     assert client.post("/demo-data").status_code == 409
+
+# ===== テンプレートのテスト =====
+def test_テンプレートの科目はすべて勘定科目マスタに存在する(client):
+    templates = client.get("/templates").json()
+    account_names = {a["name"] for a in client.get("/accounts").json()}
+
+    assert len(templates) > 0
+    for t in templates:
+        for line in t["lines"]:
+            assert line["account"] in account_names
