@@ -262,3 +262,24 @@ def test_テンプレートの科目はすべて勘定科目マスタに存在�
     for t in templates:
         for line in t["lines"]:
             assert line["account"] in account_names
+
+# ===== 月別集計のテスト =====
+def test_月別に収益と費用が集計される(client):
+    client.post("/journal-entries", json=OPENING_ENTRY)  # 収益・費用を含まない
+    client.post("/journal-entries", json=SIMPLE_ENTRY)   # 10月：消耗品費 1,100
+    client.post("/journal-entries", json=SALES_ENTRY)    # 11月：売上高 33,000
+
+    rows = client.get("/monthly-summary").json()
+    assert rows == [
+        {"month": "2026-10", "revenue": 0, "expense": 1100, "net_income": -1100},
+        {"month": "2026-11", "revenue": 33000, "expense": 0, "net_income": 33000},
+    ]
+
+
+def test_サンプルデータの月別純利益は損益計算書と一致する(client):
+    client.post("/demo-data")
+    rows = client.get("/monthly-summary").json()
+    pl = client.get("/financial-statements").json()["income_statement"]
+
+    assert len(rows) == 1
+    assert rows[0]["net_income"] == pl["net_income"]

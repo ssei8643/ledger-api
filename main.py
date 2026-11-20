@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import CheckConstraint, Date, ForeignKey, String, case, create_engine, func, select
+from sqlalchemy import CheckConstraint, Date, ForeignKey, String, case, cast, create_engine, func, select
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -538,3 +538,43 @@ TEMPLATES = [
 @app.get("/templates", response_model=list[JournalTemplate])
 def list_templates():
     return TEMPLATES
+
+# ===== 月別の収益・費用 =====
+class MonthlySummary(BaseModel):
+    month: str
+    revenue: int
+    expense: int
+    net_income: int
+
+
+@app.get("/monthly-summary", response_model=list[MonthlySummary])
+def get_monthly_summary(db: Session = Depends(get_db)):
+    # 日付 "2026-11-05" の先頭7文字 "2026-11" を「月」として使う
+    month = func.substr(cast(JournalEntry.entry_date, String), 1, 7)
+    stmt = (
+        select(month, Account.category, JournalLine.side, func.sum(JournalLine.amount))
+        .select_from(JournalLine)
+        .join(JournalEntry, JournalLine.entry_id == JournalEntry.id)
+        .join(Account, Account.name == JournalLine.account)
+        .where(Account.category.in_(["収益", "費用"]))
+        .group_by(month, Account.category, JournalLine.side)
+        .order_by(month)
+    )
+
+    totals: dict[str, dict[str, int]] = {}
+    for m, category, side, amount in db.execute(stmt).all():
+        t = totals.setdefault(m, {"revenue": 0, "expense": 0})
+        if category == "収益":
+            t["revenue"] += amount if side == "credit" else -amount
+        else:
+            t["expense"] += amount if side == "debit" else -amount
+
+    return [
+        MonthlySummary(
+            month=m,
+            revenue=t["revenue"],
+            expense=t["expense"],
+            net_income=t["revenue"] - t["expense"],
+        )
+        for m, t in totals.items()
+    ]

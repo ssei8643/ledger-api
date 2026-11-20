@@ -1,5 +1,7 @@
+import MonthlyChart from "./MonthlyChart"
 import { useEffect, useState } from "react"
 import JournalForm from "./JournalForm"
+
 
 type TrialBalanceRow = {
   account: string
@@ -21,6 +23,13 @@ const API_URL = "http://127.0.0.1:8000"
 function App() {
   const [data, setData] = useState<TrialBalance | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [refreshKey, setRefreshKey] = useState(0)
+
+  // 仕訳が増えたときに、試算表とグラフの両方を更新する
+  function refreshAll() {
+    loadTrialBalance()
+    setRefreshKey((k) => k + 1)
+  }
 
   function loadTrialBalance() {
     fetch(`${API_URL}/trial-balance`)
@@ -38,7 +47,7 @@ function App() {
     async function loadDemoData() {
     const res = await fetch(`${API_URL}/demo-data`, { method: "POST" })
     if (res.ok) {
-      loadTrialBalance()
+      refreshAll()
     } else {
       const body = await res.json()
       alert(body.detail)
@@ -55,8 +64,9 @@ function App() {
 
             <button onClick={loadDemoData}>サンプルデータを読み込む</button>
 
-      <JournalForm onCreated={loadTrialBalance} />
-
+      <JournalForm onCreated={refreshAll} />
+      
+      <MonthlyChart refreshKey={refreshKey} />
       <h2>合計残高試算表</h2>
       {error && <p>エラー：{error}</p>}
       {!error && data === null && <p>読み込み中...</p>}
