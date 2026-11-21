@@ -183,6 +183,15 @@ class JournalEntryCreate(BaseModel):
         credit = sum(l.amount for l in self.lines if l.side == "credit")
         if debit != credit:
             raise ValueError(f"借方合計 {debit} と貸方合計 {credit} が一致しません")
+
+        # 同じ科目を借方と貸方の両方に使う仕訳は、打ち消し合うだけで意味がない
+        debit_accounts = {l.account for l in self.lines if l.side == "debit"}
+        credit_accounts = {l.account for l in self.lines if l.side == "credit"}
+        same = sorted(debit_accounts & credit_accounts)
+        if same:
+            raise ValueError(
+                f"同じ勘定科目を借方と貸方の両方に使うことはできません: {', '.join(same)}"
+            )
         return self
 
 
@@ -378,7 +387,13 @@ def reverse_journal_entry(entry_id: int, payload: ReverseRequest, db: Session = 
         ],
     )
     db.add(reversal)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # 同じ仕訳への取消が同時に届き、確認のあとで先にもう一方が保存された場合。
+        # reverses_id の一意制約で弾かれるので、500ではなく409として返す
+        db.rollback()
+        raise HTTPException(status_code=409, detail="この仕訳はすでに取り消されています")
     db.refresh(reversal)
     return reversal
 
@@ -758,6 +773,13 @@ def preview_bank_import(payload: BankImportRequest, db: Session = Depends(get_db
 def commit_bank_import(payload: BankImportCommit, db: Session = Depends(get_db)):
     if any(d.account is None for d in payload.drafts):
         raise HTTPException(status_code=422, detail="勘定科目が選ばれていない明細があります")
+
+    # 相手科目に銀行口座そのものを選ぶと、借方と貸方が同じ科目になってしまう
+    if any(d.account == BANK_ACCOUNT for d in payload.drafts):
+        raise HTTPException(
+            status_code=422,
+            detail=f"相手科目に「{BANK_ACCOUNT}」は選べません（借方と貸方が同じ科目になります）",
+        )
 
     names = {d.account for d in payload.drafts if d.account}
     known = set(db.scalars(select(Account.name).where(Account.name.in_(names))))

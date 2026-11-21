@@ -30,7 +30,7 @@
 
 - フロントエンド：TypeScript、React、Vite
 - バックエンド：Python、FastAPI、SQLAlchemy、SQLite
-- テスト：pytest（33件）
+- テスト：pytest（36件）
 - 公開：Render
 
 ## 設計で気をつけたこと

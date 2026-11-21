@@ -3,6 +3,7 @@ import { useEffect, useState } from "react"
 import JournalForm from "./JournalForm"
 import BankImport from "./BankImport"
 import FinancialStatements from "./FinancialStatements"
+import { API_URL, errorMessage, getJson } from "./api"
 
 
 type TrialBalanceRow = {
@@ -29,8 +30,6 @@ function yen(amount: number): string {
   return amount === 0 ? "" : amount.toLocaleString()
 }
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000"
-
 function App() {
   const [data, setData] = useState<TrialBalance | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -43,25 +42,25 @@ function App() {
   }
 
   function loadTrialBalance() {
-    fetch(`${API_URL}/trial-balance`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return res.json()
-      })
-      .then((json: TrialBalance) => {
+    getJson<TrialBalance>("/trial-balance")
+      .then((json) => {
         setData(json)
         setError(null)
       })
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(errorMessage(e)))
   }
 
-    async function loadDemoData() {
-    const res = await fetch(`${API_URL}/demo-data`, { method: "POST" })
-    if (res.ok) {
-      refreshAll()
-    } else {
-      const body = await res.json()
-      alert(body.detail)
+  async function loadDemoData() {
+    try {
+      const res = await fetch(`${API_URL}/demo-data`, { method: "POST" })
+      if (res.ok) {
+        refreshAll()
+      } else {
+        const body = await res.json()
+        alert(body.detail)
+      }
+    } catch (e) {
+      alert(errorMessage(e))
     }
   }
 
@@ -73,7 +72,7 @@ function App() {
     <div>
       <h1>記帳アプリ</h1>
 
-            <button onClick={loadDemoData}>サンプルデータを読み込む</button>
+      <button onClick={loadDemoData}>サンプルデータを読み込む</button>
 
       <JournalForm onCreated={refreshAll} />
       <BankImport onImported={refreshAll} />

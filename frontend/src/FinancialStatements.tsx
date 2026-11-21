@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { errorMessage, getJson } from "./api"
 
 type Item = {
   account: string
@@ -28,8 +29,6 @@ type Props = {
   refreshKey: number
 }
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000"
-
 function ItemRows({ items }: { items: Item[] }) {
   return (
     <>
@@ -45,13 +44,18 @@ function ItemRows({ items }: { items: Item[] }) {
 
 export default function FinancialStatements({ refreshKey }: Props) {
   const [data, setData] = useState<FinancialStatementsData | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch(`${API_URL}/financial-statements`)
-      .then((res) => res.json())
-      .then((json: FinancialStatementsData) => setData(json))
+    getJson<FinancialStatementsData>("/financial-statements")
+      .then((json) => {
+        setData(json)
+        setError(null)
+      })
+      .catch((e) => setError(errorMessage(e)))
   }, [refreshKey])
 
+  if (error) return <p>財務諸表を読み込めませんでした：{error}</p>
   if (data === null) return null
   const pl = data.income_statement
   const bs = data.balance_sheet

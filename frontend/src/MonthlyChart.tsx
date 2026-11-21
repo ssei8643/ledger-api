@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { Bar, BarChart, CartesianGrid, Legend, Tooltip, XAxis, YAxis } from "recharts"
+import { errorMessage, getJson } from "./api"
 
 type MonthlySummary = {
   month: string
@@ -12,22 +13,26 @@ type Props = {
   refreshKey: number
 }
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000"
-
 export default function MonthlyChart({ refreshKey }: Props) {
   const [data, setData] = useState<MonthlySummary[]>([])
+  const [error, setError] = useState<string | null>(null)
 
   // refreshKey が変わるたびに（＝仕訳が登録されるたびに）取得し直す
   useEffect(() => {
-    fetch(`${API_URL}/monthly-summary`)
-      .then((res) => res.json())
-      .then((json: MonthlySummary[]) => setData(json))
+    getJson<MonthlySummary[]>("/monthly-summary")
+      .then((json) => {
+        setData(json)
+        setError(null)
+      })
+      .catch((e) => setError(errorMessage(e)))
   }, [refreshKey])
 
   return (
     <div>
       <h2>月別の収益・費用</h2>
-      {data.length === 0 ? (
+      {error ? (
+        <p>グラフを読み込めませんでした：{error}</p>
+      ) : data.length === 0 ? (
         <p>まだ収益・費用の仕訳がありません</p>
       ) : (
         <BarChart width={640} height={300} data={data}>

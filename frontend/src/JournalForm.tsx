@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react"
+import { API_URL, errorMessage, getJson } from "./api"
 
 type Side = "debit" | "credit"
 
@@ -23,8 +24,6 @@ type JournalTemplate = {
   lines: { account: string; side: Side }[]
 }
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000"
-
 function emptyLine(side: Side): LineInput {
   return { account: "", side, amount: 0 }
 }
@@ -34,22 +33,23 @@ export default function JournalForm({ onCreated }: Props) {
   const [description, setDescription] = useState("")
   const [lines, setLines] = useState<LineInput[]>([emptyLine("debit"), emptyLine("credit")])
   const [message, setMessage] = useState<string | null>(null)
-    const [accounts, setAccounts] = useState<Account[]>([])
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   // 画面を開いたときに、バックエンドから勘定科目の一覧を取得
   useEffect(() => {
-    fetch(`${API_URL}/accounts`)
-      .then((res) => res.json())
-      .then((json: Account[]) => setAccounts(json))
+    getJson<Account[]>("/accounts")
+      .then((json) => setAccounts(json))
+      .catch((e) => setLoadError(`勘定科目を読み込めませんでした：${errorMessage(e)}`))
   }, [])
 
-    const [templates, setTemplates] = useState<JournalTemplate[]>([])
+  const [templates, setTemplates] = useState<JournalTemplate[]>([])
 
   // 画面を開いたときに、テンプレートの一覧を取得
   useEffect(() => {
-    fetch(`${API_URL}/templates`)
-      .then((res) => res.json())
-      .then((json: JournalTemplate[]) => setTemplates(json))
+    getJson<JournalTemplate[]>("/templates")
+      .then((json) => setTemplates(json))
+      .catch((e) => setLoadError(`テンプレートを読み込めませんでした：${errorMessage(e)}`))
   }, [])
 
   // テンプレートを選ぶと、摘要と科目・借貸を自動で入力
@@ -117,6 +117,7 @@ export default function JournalForm({ onCreated }: Props) {
   return (
     <form onSubmit={handleSubmit}>
       <h2>仕訳の入力</h2>
+      {loadError && <p>{loadError}</p>}
       <div>
         <select value="" onChange={(e) => applyTemplate(e.target.value)}>
           <option value="">テンプレートから入力</option>

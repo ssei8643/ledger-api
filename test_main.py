@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from main import (
@@ -195,6 +195,30 @@ def test_取消仕訳はさらに取り消せない(client):
     client.post("/journal-entries/1/reverse", json=REVERSE_REQUEST)
     res = client.post("/journal-entries/2/reverse", json=REVERSE_REQUEST)
     assert res.status_code == 422
+
+
+def test_同じ勘定科目を借方と貸方の両方に使う仕訳は拒否される(client):
+    bad = {**SIMPLE_ENTRY, "lines": [
+        {"account": "現金", "side": "debit", "amount": 1000},
+        {"account": "現金", "side": "credit", "amount": 1000},
+    ]}
+    res = client.post("/journal-entries", json=bad)
+    assert res.status_code == 422
+    assert client.get("/journal-entries").json() == []
+
+
+def test_取消が同時に届いても取消仕訳は1つだけで409が返る(client, monkeypatch):
+    client.post("/journal-entries", json=SIMPLE_ENTRY)
+    client.post("/journal-entries/1/reverse", json=REVERSE_REQUEST)
+
+    # 「まだ取り消されていない」と判定された直後に、別のリクエストが
+    # 先に取消仕訳を保存した状況を再現する（確認の結果を常に「なし」にする）
+    monkeypatch.setattr(Session, "scalar", lambda self, *args, **kwargs: None)
+    res = client.post("/journal-entries/1/reverse", json=REVERSE_REQUEST)
+    monkeypatch.undo()
+
+    assert res.status_code == 409
+    assert len(client.get("/journal-entries").json()) == 2
 
 
 # ===== APIを通らない経路のテスト（データベースを直接使う） =====
@@ -418,6 +442,14 @@ def test_同じ明細は二重に取り込めない(client):
 def test_勘定科目が未選択の明細は取り込めない(client):
     drafts = preview_drafts(client)
     assert client.post("/bank-import", json={"drafts": drafts}).status_code == 422
+
+
+def test_相手科目に普通預金を選んだ明細は取り込めない(client):
+    drafts = preview_drafts(client)
+    drafts[2]["account"] = "普通預金"
+    res = client.post("/bank-import", json={"drafts": drafts})
+    assert res.status_code == 422
+    assert client.get("/journal-entries").json() == []
 
 
 def test_CSVの見出しが違うとエラーになる(client):

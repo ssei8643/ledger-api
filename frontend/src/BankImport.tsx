@@ -1,4 +1,5 @@
 import { useEffect, useState, type ChangeEvent } from "react"
+import { API_URL, errorMessage, getJson } from "./api"
 
 type Account = {
   name: string
@@ -19,7 +20,8 @@ type Props = {
   onImported: () => void
 }
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000"
+// 銀行口座の科目。相手科目に選ぶと借方と貸方が同じ科目になるので、選択肢から外す
+const BANK_ACCOUNT = "普通預金"
 
 // 銀行のCSVはShift_JISのことが多いので、UTF-8で読めなければShift_JISで読み直す
 function decodeCsv(buffer: ArrayBuffer): string {
@@ -44,9 +46,9 @@ export default function BankImport({ onImported }: Props) {
   const [message, setMessage] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch(`${API_URL}/accounts`)
-      .then((res) => res.json())
-      .then((json: Account[]) => setAccounts(json))
+    getJson<Account[]>("/accounts")
+      .then((json) => setAccounts(json.filter((a) => a.name !== BANK_ACCOUNT)))
+      .catch((e) => setMessage(`勘定科目を読み込めませんでした：${errorMessage(e)}`))
   }, [])
 
   async function handleFile(e: ChangeEvent<HTMLInputElement>) {
