@@ -8,6 +8,8 @@ import FinancialStatements from "./FinancialStatements"
 type TrialBalanceRow = {
   account: string
   category: string
+  debit_total: number
+  credit_total: number
   debit_balance: number
   credit_balance: number
   warning: string | null
@@ -17,7 +19,14 @@ type TrialBalance = {
   rows: TrialBalanceRow[]
   debit_total: number
   credit_total: number
+  debit_balance_total: number
+  credit_balance_total: number
   is_balanced: boolean
+}
+
+// 0円の欄は空欄にして、金額のある欄を読みやすくする
+function yen(amount: number): string {
+  return amount === 0 ? "" : amount.toLocaleString()
 }
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000"
@@ -77,28 +86,34 @@ function App() {
         <table>
           <thead>
             <tr>
+              <th>借方合計</th>
+              <th>借方残高</th>
               <th>科目</th>
               <th>分類</th>
-              <th>借方残高</th>
               <th>貸方残高</th>
+              <th>貸方合計</th>
               <th>警告</th>
             </tr>
           </thead>
           <tbody>
             {data.rows.map((r) => (
               <tr key={r.account}>
+                <td>{yen(r.debit_total)}</td>
+                <td>{yen(r.debit_balance)}</td>
                 <td>{r.account}</td>
                 <td>{r.category}</td>
-                <td>{r.debit_balance.toLocaleString()}</td>
-                <td>{r.credit_balance.toLocaleString()}</td>
+                <td>{yen(r.credit_balance)}</td>
+                <td>{yen(r.credit_total)}</td>
                 <td>{r.warning ?? ""}</td>
               </tr>
             ))}
           </tbody>
           <tfoot>
             <tr>
-              <td colSpan={2}>合計</td>
               <td>{data.debit_total.toLocaleString()}</td>
+              <td>{data.debit_balance_total.toLocaleString()}</td>
+              <td colSpan={2}>合計</td>
+              <td>{data.credit_balance_total.toLocaleString()}</td>
               <td>{data.credit_total.toLocaleString()}</td>
               <td>{data.is_balanced ? "一致" : "不一致"}</td>
             </tr>

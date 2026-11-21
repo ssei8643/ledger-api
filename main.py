@@ -214,8 +214,12 @@ class TrialBalanceRow(BaseModel):
 
 class TrialBalance(BaseModel):
     rows: list[TrialBalanceRow]
+    # 合計（各科目の借方・貸方の合計額を足したもの）
     debit_total: int
     credit_total: int
+    # 残高（各科目の借方残高・貸方残高を足したもの）
+    debit_balance_total: int
+    credit_balance_total: int
     is_balanced: bool
     warning_count: int
 
@@ -309,9 +313,9 @@ def get_trial_balance(db: Session = Depends(get_db)):
         # 本来と逆側に残高が出ていれば警告（科目ごとの残高の向きで判定）
         warning = None
         if normal_side == "debit" and diff < 0:
-            warning = f"{category}の科目が貸方残高になっています"
+            warning = f"{account}が貸方残高になっています（通常は借方残高）"
         elif normal_side == "credit" and diff > 0:
-            warning = f"{category}の科目が借方残高になっています"
+            warning = f"{account}が借方残高になっています（通常は貸方残高）"
 
         rows.append(
             TrialBalanceRow(
@@ -328,11 +332,18 @@ def get_trial_balance(db: Session = Depends(get_db)):
     rows.sort(key=lambda r: (CATEGORY_ORDER.index(r.category), r.account))
     debit_total = sum(r.debit_total for r in rows)
     credit_total = sum(r.credit_total for r in rows)
+    debit_balance_total = sum(r.debit_balance for r in rows)
+    credit_balance_total = sum(r.credit_balance for r in rows)
     return TrialBalance(
         rows=rows,
         debit_total=debit_total,
         credit_total=credit_total,
-        is_balanced=debit_total == credit_total,
+        debit_balance_total=debit_balance_total,
+        credit_balance_total=credit_balance_total,
+        is_balanced=(
+            debit_total == credit_total
+            and debit_balance_total == credit_balance_total
+        ),
         warning_count=sum(1 for r in rows if r.warning),
     )
     
