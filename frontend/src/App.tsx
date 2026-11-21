@@ -2,6 +2,7 @@ import MonthlyChart from "./MonthlyChart"
 import { useEffect, useState } from "react"
 import JournalForm from "./JournalForm"
 import BankImport from "./BankImport"
+import FinancialStatements from "./FinancialStatements"
 
 
 type TrialBalanceRow = {
@@ -104,6 +105,7 @@ function App() {
           </tfoot>
         </table>
       )}
+    <FinancialStatements refreshKey={refreshKey} />
     </div>
   )
 }
