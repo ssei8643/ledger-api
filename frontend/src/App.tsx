@@ -1,6 +1,7 @@
 import MonthlyChart from "./MonthlyChart"
 import { useEffect, useState } from "react"
 import JournalForm from "./JournalForm"
+import BankImport from "./BankImport"
 
 
 type TrialBalanceRow = {
@@ -65,6 +66,7 @@ function App() {
             <button onClick={loadDemoData}>サンプルデータを読み込む</button>
 
       <JournalForm onCreated={refreshAll} />
+      <BankImport onImported={refreshAll} />
       
       <MonthlyChart refreshKey={refreshKey} />
       <h2>合計残高試算表</h2>

@@ -283,3 +283,51 @@ def test_サンプルデータの月別純利益は損益計算書と一致す�
 
     assert len(rows) == 1
     assert rows[0]["net_income"] == pl["net_income"]
+
+# ===== 銀行明細CSVの取り込みのテスト =====
+SAMPLE_CSV = (
+    "日付,摘要,出金,入金\n"
+    "2026-12-01,ﾌﾘｺﾐ ｴｰｼｬ,,88000\n"
+    "2026-12-03,ドコモ 携帯料金,5500,\n"
+    "2026-12-25,ﾎｰﾑｾﾝﾀｰ ｶｲﾓﾉ,880,\n"
+)
+
+
+def preview_drafts(client):
+    return client.post("/bank-import/preview", json={"csv_text": SAMPLE_CSV}).json()
+
+
+def test_CSVの摘要から勘定科目が推測される(client):
+    drafts = preview_drafts(client)
+    assert [d["account"] for d in drafts] == ["売掛金", "通信費", None]
+    assert [d["direction"] for d in drafts] == ["in", "out", "out"]
+
+
+def test_取り込んだ明細から仕訳が作られる(client):
+    drafts = preview_drafts(client)
+    drafts[2]["account"] = "消耗品費"
+    res = client.post("/bank-import", json={"drafts": drafts})
+    assert res.status_code == 201
+
+    rows = {r["account"]: r for r in client.get("/trial-balance").json()["rows"]}
+    assert rows["普通預金"]["debit_balance"] == 88000 - 5500 - 880
+
+
+def test_同じ明細は二重に取り込めない(client):
+    drafts = preview_drafts(client)
+    drafts[2]["account"] = "消耗品費"
+    client.post("/bank-import", json={"drafts": drafts})
+
+    again = preview_drafts(client)
+    assert all(d["already_imported"] for d in again)
+    assert client.post("/bank-import", json={"drafts": drafts}).status_code == 409
+
+
+def test_勘定科目が未選択の明細は取り込めない(client):
+    drafts = preview_drafts(client)
+    assert client.post("/bank-import", json={"drafts": drafts}).status_code == 422
+
+
+def test_CSVの見出しが違うとエラーになる(client):
+    res = client.post("/bank-import/preview", json={"csv_text": "date,memo,out,in\n"})
+    assert res.status_code == 422

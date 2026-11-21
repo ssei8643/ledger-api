@@ -1,3 +1,9 @@
+import csv
+import hashlib
+import io
+import unicodedata
+
+from sqlalchemy.exc import IntegrityError
 from datetime import date
 from typing import Literal
 from fastapi.middleware.cors import CORSMiddleware
@@ -70,6 +76,7 @@ class JournalEntry(Base):
     entry_date: Mapped[date] = mapped_column(Date)
     description: Mapped[str] = mapped_column(String(200))
     reverses_id: Mapped[int | None] = mapped_column(ForeignKey("journal_entries.id"), unique=True, default=None)
+    import_key: Mapped[str | None] = mapped_column(String(64), unique=True, default=None)
     lines: Mapped[list["JournalLine"]] = relationship(back_populates="entry")
 
 
@@ -578,3 +585,150 @@ def get_monthly_summary(db: Session = Depends(get_db)):
         )
         for m, t in totals.items()
     ]
+
+# ===== 銀行明細CSVの取り込み =====
+BANK_ACCOUNT = "普通預金"
+
+# 摘要に含まれるキーワードから勘定科目を推測するルール
+OUT_RULES = [
+    ("手数料", "支払手数料"),
+    ("ドコモ", "通信費"),
+    ("ソフトバンク", "通信費"),
+    ("NTT", "通信費"),
+    ("JR", "旅費交通費"),
+    ("SUICA", "旅費交通費"),
+    ("AMAZON", "消耗品費"),
+    ("アマゾン", "消耗品費"),
+    ("ATM", "事業主貸"),
+]
+IN_RULES = [
+    ("フリコミ", "売掛金"),
+    ("振込", "売掛金"),
+]
+
+
+def suggest_account(description: str, direction: str) -> str | None:
+    # 半角カナ・全角英数字を揃えてから比較する（例：ﾌﾘｺﾐ → フリコミ）
+    text = unicodedata.normalize("NFKC", description).upper()
+    rules = OUT_RULES if direction == "out" else IN_RULES
+    for keyword, account in rules:
+        if keyword in text:
+            return account
+    return None
+
+
+def to_int(value: str | None) -> int:
+    value = (value or "").replace(",", "").strip()
+    return int(value) if value else 0
+
+
+class BankImportRequest(BaseModel):
+    csv_text: str
+
+
+class BankDraft(BaseModel):
+    import_key: str
+    entry_date: date
+    description: str
+    direction: Literal["in", "out"]
+    amount: int = Field(gt=0)
+    account: str | None = None
+    already_imported: bool = False
+
+
+class BankImportCommit(BaseModel):
+    drafts: list[BankDraft] = Field(min_length=1)
+
+
+@app.post("/bank-import/preview", response_model=list[BankDraft])
+def preview_bank_import(payload: BankImportRequest, db: Session = Depends(get_db)):
+    reader = csv.DictReader(io.StringIO(payload.csv_text.lstrip("\ufeff")))
+    if reader.fieldnames is None or not {"日付", "摘要", "出金", "入金"} <= set(reader.fieldnames):
+        raise HTTPException(status_code=422, detail="CSVの1行目は「日付,摘要,出金,入金」にしてください")
+
+    drafts = []
+    seen: dict[str, int] = {}
+    for row_no, row in enumerate(reader, start=2):
+        try:
+            entry_date = date.fromisoformat((row["日付"] or "").strip().replace("/", "-"))
+            out_amount = to_int(row["出金"])
+            in_amount = to_int(row["入金"])
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"{row_no}行目の日付または金額を読み取れません")
+
+        if out_amount > 0 and in_amount == 0:
+            direction, amount = "out", out_amount
+        elif in_amount > 0 and out_amount == 0:
+            direction, amount = "in", in_amount
+        else:
+            raise HTTPException(status_code=422, detail=f"{row_no}行目は出金か入金のどちらか一方を入力してください")
+
+        description = (row["摘要"] or "").strip()
+
+        # 同じ内容の明細が同じファイルに複数ある場合も区別できるよう、出現回数を含めてキーを作る
+        base = f"{entry_date}|{description}|{direction}|{amount}"
+        seen[base] = seen.get(base, 0) + 1
+        import_key = hashlib.sha256(f"{base}|{seen[base]}".encode()).hexdigest()
+
+        drafts.append(
+            BankDraft(
+                import_key=import_key,
+                entry_date=entry_date,
+                description=description,
+                direction=direction,
+                amount=amount,
+                account=suggest_account(description, direction),
+            )
+        )
+
+    # すでに取り込み済みの明細に印をつける
+    keys = [d.import_key for d in drafts]
+    existing = set(db.scalars(select(JournalEntry.import_key).where(JournalEntry.import_key.in_(keys))))
+    for d in drafts:
+        d.already_imported = d.import_key in existing
+    return drafts
+
+
+@app.post("/bank-import", status_code=201)
+def commit_bank_import(payload: BankImportCommit, db: Session = Depends(get_db)):
+    if any(d.account is None for d in payload.drafts):
+        raise HTTPException(status_code=422, detail="勘定科目が選ばれていない明細があります")
+
+    names = {d.account for d in payload.drafts if d.account}
+    known = set(db.scalars(select(Account.name).where(Account.name.in_(names))))
+    unknown = sorted(names - known)
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"未登録の勘定科目です: {', '.join(unknown)}")
+
+    keys = [d.import_key for d in payload.drafts]
+    if db.scalar(select(func.count(JournalEntry.id)).where(JournalEntry.import_key.in_(keys))) > 0:
+        raise HTTPException(status_code=409, detail="すでに取り込み済みの明細が含まれています")
+
+    # 出金：費用など（借方）／普通預金（貸方）、入金：普通預金（借方）／売掛金など（貸方）
+    for d in payload.drafts:
+        if d.direction == "out":
+            lines = [
+                JournalLine(account=d.account, side="debit", amount=d.amount),
+                JournalLine(account=BANK_ACCOUNT, side="credit", amount=d.amount),
+            ]
+        else:
+            lines = [
+                JournalLine(account=BANK_ACCOUNT, side="debit", amount=d.amount),
+                JournalLine(account=d.account, side="credit", amount=d.amount),
+            ]
+        db.add(
+            JournalEntry(
+                entry_date=d.entry_date,
+                description=d.description,
+                import_key=d.import_key,
+                lines=lines,
+            )
+        )
+
+    try:
+        db.commit()  # まとめて1つのトランザクションで保存
+    except IntegrityError:
+        # APIの確認をすり抜けた重複も、データベースの一意制約で防ぐ
+        db.rollback()
+        raise HTTPException(status_code=409, detail="すでに取り込み済みの明細が含まれています")
+    return {"created": len(payload.drafts)}
