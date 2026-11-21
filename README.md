@@ -4,6 +4,7 @@
 
 - デモ：https://ledger-frontend-5d86.onrender.com
 - APIドキュメント：https://ledger-api-5uqs.onrender.com/docs
+- 解説記事（Zenn）：[簿記のルールをコードで守る：複合仕訳・貸借一致チェック・訂正仕訳の設計](https://zenn.dev/burrata/articles/ssei-ledger-bookkeeping-rules)
 
 デモは無料プランで公開しているため、しばらくアクセスがないと停止し、次のアクセス時の起動に1分ほどかかります。停止するとデータはサンプルデータの状態に戻るので、開いてすぐに動作を試せます。ログイン機能がなく誰でも書き込めるので、個人情報は入力しないでください。
 
