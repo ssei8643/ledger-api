@@ -1,3 +1,4 @@
+import os
 import csv
 import hashlib
 import io
@@ -173,9 +174,14 @@ class TrialBalance(BaseModel):
 
 # ===== アプリとAPI =====
 app = FastAPI()
+
+allowed_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+if os.getenv("FRONTEND_ORIGIN"):
+    allowed_origins.append(os.getenv("FRONTEND_ORIGIN"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -732,3 +738,9 @@ def commit_bank_import(payload: BankImportCommit, db: Session = Depends(get_db))
         db.rollback()
         raise HTTPException(status_code=409, detail="すでに取り込み済みの明細が含まれています")
     return {"created": len(payload.drafts)}
+
+# ===== デモ環境：起動時にデータが空ならサンプルデータを読み込む =====
+if os.getenv("DEMO_MODE") == "1":
+    with SessionLocal() as _db:
+        if _db.scalar(select(func.count(JournalEntry.id))) == 0:
+            load_demo_data(_db)
