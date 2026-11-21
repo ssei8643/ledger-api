@@ -4,6 +4,7 @@ import hashlib
 import io
 import unicodedata
 
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from datetime import date
 from typing import Literal
@@ -11,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import CheckConstraint, Date, ForeignKey, String, case, cast, create_engine, func, select
+from sqlalchemy import CheckConstraint, Date, ForeignKey, String, case, cast, create_engine, event, func, select
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -25,6 +26,14 @@ from sqlalchemy.orm import (
 # ===== データベース接続 =====
 engine = create_engine("sqlite:///./ledger.db", connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine)
+
+
+@event.listens_for(Engine, "connect")
+def enable_sqlite_foreign_keys(dbapi_connection, connection_record):
+    # SQLiteは外部キー制約を既定では検査しないので、接続するたびに有効にする
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
 
 
 class Base(DeclarativeBase):
@@ -57,15 +66,25 @@ DEFAULT_ACCOUNTS = [
     ("支払手数料", "費用"),
     ("通信費", "費用"),
     ("旅費交通費", "費用"),
+    ("減価償却費", "費用"),
+    ("貸倒引当金繰入額", "費用"),
+    # 評価勘定：分類は資産だが、残高は貸方に出る（3つ目の値で残高の向きを上書き）
+    ("減価償却累計額", "資産", "credit"),
+    ("貸倒引当金", "資産", "credit"),
 ]
 
 
 class Account(Base):
     """勘定科目"""
     __tablename__ = "accounts"
+    __table_args__ = (
+        CheckConstraint("normal_side IN ('debit', 'credit')", name="ck_normal_side"),
+    )
 
     name: Mapped[str] = mapped_column(String(50), primary_key=True)
     category: Mapped[str] = mapped_column(String(10))
+    # 残高が本来どちら側に出るか（分類の既定値を、科目ごとに上書きできる）
+    normal_side: Mapped[str] = mapped_column(String(6))
 
 
 # ===== 仕訳 =====
@@ -91,18 +110,47 @@ class JournalLine(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     entry_id: Mapped[int] = mapped_column(ForeignKey("journal_entries.id"))
-    account: Mapped[str] = mapped_column(String(50))
+    account: Mapped[str] = mapped_column(String(50), ForeignKey("accounts.name"))
     side: Mapped[str] = mapped_column(String(6))
     amount: Mapped[int]
     entry: Mapped[JournalEntry] = relationship(back_populates="lines")
 
 
+# ===== 貸借一致のチェック（すべての保存経路で必ず通る） =====
+class UnbalancedEntryError(ValueError):
+    """貸借が一致しない仕訳を保存しようとしたときのエラー"""
+
+
+def ensure_balanced(entry: JournalEntry) -> None:
+    debit = sum(l.amount for l in entry.lines if l.side == "debit")
+    credit = sum(l.amount for l in entry.lines if l.side == "credit")
+    if len(entry.lines) < 2 or debit != credit:
+        raise UnbalancedEntryError(
+            f"貸借が一致しない仕訳は保存できません（借方 {debit}／貸方 {credit}）"
+        )
+
+
+@event.listens_for(Session, "before_flush")
+def check_entries_before_flush(session, flush_context, instances):
+    # APIのバリデーションを通らない経路（取消・CSV取り込みなど）も含め、
+    # データベースに書き込む直前に、追加・変更された仕訳の貸借を確認する
+    entries = set()
+    for obj in list(session.new) + list(session.dirty):
+        if isinstance(obj, JournalEntry):
+            entries.add(obj)
+        elif isinstance(obj, JournalLine) and obj.entry is not None:
+            entries.add(obj.entry)
+    for entry in entries:
+        ensure_balanced(entry)
+
+
 def seed_accounts(db: Session) -> None:
     """初期の勘定科目を登録（登録済みのものはスキップ）"""
     existing = set(db.scalars(select(Account.name)))
-    for name, category in DEFAULT_ACCOUNTS:
+    for name, category, *override in DEFAULT_ACCOUNTS:
         if name not in existing:
-            db.add(Account(name=name, category=category))
+            normal_side = override[0] if override else CATEGORY_NORMAL_SIDE[category]
+            db.add(Account(name=name, category=category, normal_side=normal_side))
     db.commit()
 
 
@@ -249,17 +297,16 @@ def get_trial_balance(db: Session = Depends(get_db)):
     debit_sum = func.sum(case((JournalLine.side == "debit", JournalLine.amount), else_=0))
     credit_sum = func.sum(case((JournalLine.side == "credit", JournalLine.amount), else_=0))
     stmt = (
-        select(JournalLine.account, Account.category, debit_sum, credit_sum)
+        select(JournalLine.account, Account.category, Account.normal_side, debit_sum, credit_sum)
         .join(Account, Account.name == JournalLine.account)
-        .group_by(JournalLine.account, Account.category)
+        .group_by(JournalLine.account, Account.category, Account.normal_side)
     )
 
     rows = []
-    for account, category, debit, credit in db.execute(stmt).all():
+    for account, category, normal_side, debit, credit in db.execute(stmt).all():
         diff = debit - credit
-        normal_side = CATEGORY_NORMAL_SIDE[category]
 
-        # 本来と逆側に残高が出ていれば警告
+        # 本来と逆側に残高が出ていれば警告（科目ごとの残高の向きで判定）
         warning = None
         if normal_side == "debit" and diff < 0:
             warning = f"{category}の科目が貸方残高になっています"
@@ -349,8 +396,8 @@ def get_ledger(account_name: str, db: Session = Depends(get_db)):
         .order_by(JournalEntry.entry_date, JournalEntry.id)
     )
 
-    # 1行ずつ残高を計算（科目の分類によって増減の向きが変わる）
-    normal_side = CATEGORY_NORMAL_SIDE[account.category]
+    # 1行ずつ残高を計算（科目ごとの残高の向きによって増減の向きが変わる）
+    normal_side = account.normal_side
     balance = 0
     rows = []
     for line, entry in db.execute(stmt).all():
@@ -412,7 +459,8 @@ def get_financial_statements(db: Session = Depends(get_db)):
         .order_by(JournalLine.account)
     )
 
-    # 科目ごとの残高を、本来残高が出る側を正として計算し、分類ごとにまとめる
+    # 科目ごとの残高を、分類の本来の側を正として計算し、分類ごとにまとめる
+    # （減価償却累計額などの評価勘定はマイナスになり、資産の合計から差し引かれる）
     groups = {category: [] for category in CATEGORY_ORDER}
     for account, category, debit, credit in db.execute(stmt).all():
         if CATEGORY_NORMAL_SIDE[category] == "debit":
@@ -495,7 +543,7 @@ def load_demo_data(db: Session = Depends(get_db)):
         )
 
     for entry_date, description, lines in SAMPLE_ENTRIES:
-        # サンプルデータも通常の入力と同じルール（借貸一致など）で検証する
+        # サンプルデータも通常の入力と同じルール（貸借一致など）で検証する
         payload = JournalEntryCreate(
             entry_date=entry_date,
             description=description,

@@ -33,7 +33,8 @@ export default function MonthlyChart({ refreshKey }: Props) {
         <BarChart width={640} height={300} data={data}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="month" />
-          <YAxis tickFormatter={(v: number) => v.toLocaleString()} />
+          {/* 260,000 のような桁数の多い金額が切れないよう、軸の幅を広げる */}
+          <YAxis width={80} tickFormatter={(v: number) => v.toLocaleString()} />
           <Tooltip />
           <Legend />
           <Bar dataKey="revenue" name="収益" fill="#4a90d9" />

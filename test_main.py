@@ -1,10 +1,21 @@
+from datetime import date
+
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from main import Base, app, get_db, seed_accounts
+from main import (
+    Base,
+    JournalEntry,
+    JournalLine,
+    UnbalancedEntryError,
+    app,
+    get_db,
+    seed_accounts,
+)
 
 
 # ===== テストの準備：毎回まっさらなメモリ上のDBを使う =====
@@ -52,7 +63,7 @@ COMPOUND_ENTRY = {
 
 
 # ===== テスト本体 =====
-def test_借貸が一致する仕訳は登録できる(client):
+def test_貸借が一致する仕訳は登録できる(client):
     res = client.post("/journal-entries", json=SIMPLE_ENTRY)
     assert res.status_code == 201
     assert res.json()["id"] == 1
@@ -64,7 +75,7 @@ def test_複合仕訳を登録できる(client):
     assert len(res.json()["lines"]) == 3
 
 
-def test_借貸が一致しない仕訳は拒否され保存もされない(client):
+def test_貸借が一致しない仕訳は拒否され保存もされない(client):
     bad = {**SIMPLE_ENTRY, "lines": [
         {"account": "消耗品費", "side": "debit", "amount": 1100},
         {"account": "現金", "side": "credit", "amount": 1000},
@@ -151,7 +162,7 @@ def test_開始仕訳を登録すると警告が消える(client):
 REVERSE_REQUEST = {"entry_date": "2026-10-28", "reason": "金額誤り"}
 
 
-def test_仕訳を取り消すと借貸が逆の仕訳が作られる(client):
+def test_仕訳を取り消すと貸借が逆の仕訳が作られる(client):
     client.post("/journal-entries", json=SIMPLE_ENTRY)
     res = client.post("/journal-entries/1/reverse", json=REVERSE_REQUEST)
     assert res.status_code == 201
@@ -184,6 +195,76 @@ def test_取消仕訳はさらに取り消せない(client):
     client.post("/journal-entries/1/reverse", json=REVERSE_REQUEST)
     res = client.post("/journal-entries/2/reverse", json=REVERSE_REQUEST)
     assert res.status_code == 422
+
+
+# ===== APIを通らない経路のテスト（データベースを直接使う） =====
+@pytest.fixture
+def db():
+    test_engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(test_engine)
+    with sessionmaker(bind=test_engine)() as session:
+        seed_accounts(session)
+        yield session
+
+
+def add_entry_directly(db, lines):
+    db.add(
+        JournalEntry(
+            entry_date=date(2026, 11, 1),
+            description="APIを通さずに作った仕訳",
+            lines=[JournalLine(account=a, side=s, amount=amt) for a, s, amt in lines],
+        )
+    )
+
+
+def test_APIを通らない経路でも貸借が一致しない仕訳は保存されない(db):
+    add_entry_directly(db, [("現金", "debit", 1000), ("売上高", "credit", 900)])
+    with pytest.raises(UnbalancedEntryError):
+        db.commit()
+    db.rollback()
+    assert db.scalar(select(func.count(JournalEntry.id))) == 0
+
+
+def test_APIを通らない経路でも未登録の勘定科目は保存されない(db):
+    add_entry_directly(db, [("現全", "debit", 1000), ("売上高", "credit", 1000)])
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+    assert db.scalar(select(func.count(JournalEntry.id))) == 0
+
+
+# ===== 評価勘定（残高の向きの上書き）のテスト =====
+DEPRECIATION_ENTRY = {
+    "entry_date": "2026-12-31",
+    "description": "減価償却（間接法）",
+    "lines": [
+        {"account": "減価償却費", "side": "debit", "amount": 5000},
+        {"account": "減価償却累計額", "side": "credit", "amount": 5000},
+    ],
+}
+
+
+def test_減価償却累計額は貸方残高でも警告が出ない(client):
+    client.post("/journal-entries", json=OPENING_ENTRY)
+    client.post("/journal-entries", json=DEPRECIATION_ENTRY)
+
+    rows = {r["account"]: r for r in client.get("/trial-balance").json()["rows"]}
+    assert rows["減価償却累計額"]["credit_balance"] == 5000
+    assert rows["減価償却累計額"]["warning"] is None
+
+
+def test_減価償却累計額は貸借対照表で資産から差し引かれる(client):
+    client.post("/journal-entries", json=OPENING_ENTRY)  # 資産 61,000
+    client.post("/journal-entries", json=DEPRECIATION_ENTRY)
+
+    bs = client.get("/financial-statements").json()["balance_sheet"]
+    assert bs["total_assets"] == 61000 - 5000
+    assert bs["total_liabilities_and_equity"] == 61000 - 5000
+    assert bs["is_balanced"] is True
 
 # ===== 総勘定元帳のテスト =====
 def test_総勘定元帳で残高の推移がわかる(client):
