@@ -10,6 +10,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import date
+from typing import Literal
 
 
 class BankCsvError(ValueError):
@@ -20,7 +21,7 @@ class BankCsvError(ValueError):
 class BankRow:
     entry_date: date
     description: str
-    direction: str  # "in"（入金）または "out"（出金）
+    direction: Literal["in", "out"]  # 入金・出金
     amount: int
 
 

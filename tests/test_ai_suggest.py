@@ -1,5 +1,5 @@
-import ai_suggest
-from ai_suggest import suggest_accounts_with_ai
+from ledger import ai_suggest
+from ledger.ai_suggest import suggest_accounts_with_ai
 
 ACCOUNTS = ["消耗品費", "会議費", "事業主貸", "売掛金"]
 

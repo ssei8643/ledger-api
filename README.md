@@ -65,6 +65,26 @@
 
 AIの答えはそのまま使わず、勘定科目マスタにある科目かどうかを確かめてから使います。APIキーがないときやエラー・タイムアウトのときは、これまで通り空欄のまま人が選ぶ形に戻るので、AIが使えなくても取り込みは止まりません。テストでは本物のAIは呼ばず、決まった答えを返す偽の関数に差し替えています。
 
+## コードの構成
+
+役割ごとにファイルを分け、APIの層（routers）は入力を受け取ってサービスを呼ぶだけにしています。簿記のルールはサービスの層（services）にまとめているので、HTTPを通さずに直接テストできます。
+
+```
+src/ledger/
+├── main.py               # アプリの組み立て（ルーター・エラー処理・起動時の処理）
+├── config.py             # 環境変数から読む設定
+├── db.py                 # データベース接続
+├── models.py             # テーブルの定義と、保存直前の貸借チェック
+├── schemas.py            # APIのリクエスト・レスポンスの形式
+├── errors.py             # 業務ルールのエラー（404・409・422に変換する）
+├── chart_of_accounts.py  # 勘定科目マスタ
+├── routers/              # APIのエンドポイント
+├── services/             # 仕訳・帳簿の集計・銀行明細の取り込みなどの処理
+├── bank_csv.py           # 銀行ごとのCSVの形式差を吸収する
+└── ai_suggest.py         # AIによる勘定科目の推測
+tests/                    # 機能ごとのテスト
+```
+
 ## 苦労したこと
 
 - **公開したら画面が真っ白になった**
@@ -81,7 +101,7 @@ AIの答えはそのまま使わず、勘定科目マスタにある科目かど
 ```bash
 # バックエンド
 uv sync
-uv run fastapi dev main.py
+uv run fastapi dev src/ledger/main.py
 
 # フロントエンド（別のターミナルで）
 cd frontend
@@ -96,7 +116,7 @@ AIによる科目の推測を使う場合は、バックエンドを起動する
 ```powershell
 # Windows（PowerShell）の例
 $env:ANTHROPIC_API_KEY = "取得したAPIキー"
-uv run fastapi dev main.py
+uv run fastapi dev src/ledger/main.py
 ```
 
 ## Dockerで動かす
@@ -123,7 +143,6 @@ docker compose up --build
 - 先頭に口座情報などの行があるCSVへの対応
 - 年度・期間を指定した財務諸表と、決算整理
 - マイグレーションの仕組み（Alembicなど）の導入
-- main.py を、モデル・スキーマ・APIごとのファイルに分ける
 - 消費税の扱い
 - エラー時の部分表示（Error Boundary）
 - ログイン機能と、事業者ごとのデータの分離
