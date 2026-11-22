@@ -12,7 +12,7 @@ class Account(Base):
     """勘定科目"""
 
     __tablename__ = "accounts"
-    __table_args__ = (CheckConstraint("normal_side IN ('debit', 'credit')", name="ck_normal_side"),)
+    __table_args__ = (CheckConstraint("normal_side IN ('debit', 'credit')", name="normal_side"),)
 
     name: Mapped[str] = mapped_column(String(50), primary_key=True)
     category: Mapped[str] = mapped_column(String(10))
@@ -40,13 +40,15 @@ class JournalLine(Base):
 
     __tablename__ = "journal_lines"
     __table_args__ = (
-        CheckConstraint("amount > 0", name="ck_amount_positive"),
-        CheckConstraint("side IN ('debit', 'credit')", name="ck_side"),
+        CheckConstraint("amount > 0", name="amount_positive"),
+        CheckConstraint("side IN ('debit', 'credit')", name="side"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    entry_id: Mapped[int] = mapped_column(ForeignKey("journal_entries.id"))
-    account: Mapped[str] = mapped_column(String(50), ForeignKey("accounts.name"))
+    # 仕訳ごと・科目ごとに明細を集める処理（元帳・試算表）が多いので、インデックスを付ける
+    # （PostgreSQLは外部キーの列に自動でインデックスを作らない）
+    entry_id: Mapped[int] = mapped_column(ForeignKey("journal_entries.id"), index=True)
+    account: Mapped[str] = mapped_column(String(50), ForeignKey("accounts.name"), index=True)
     side: Mapped[str] = mapped_column(String(6))
     amount: Mapped[int]
     entry: Mapped[JournalEntry] = relationship(back_populates="lines")

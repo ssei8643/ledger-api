@@ -1,12 +1,17 @@
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from ledger.chart_of_accounts import seed_accounts
-from ledger.config import Settings
+from ledger.config import Settings, normalize_database_url
 from ledger.db import Base, make_engine
 from ledger.main import create_app
+
+# 既定はメモリ上のSQLite。TEST_DATABASE_URL を指定すると、同じテストをPostgreSQLでも実行できる（CIで使う）
+TEST_DATABASE_URL = normalize_database_url(os.getenv("TEST_DATABASE_URL", "sqlite://"))
 
 
 @pytest.fixture(autouse=True)
@@ -19,11 +24,18 @@ def no_real_ai(monkeypatch):
 
 @pytest.fixture
 def session_factory():
-    # 毎回まっさらなメモリ上のDBを使う（StaticPoolで全セッションが同じ接続を共有する）
-    engine = make_engine("sqlite://", poolclass=StaticPool)
+    # テストごとにテーブルを作り直し、まっさらな状態から始める
+    if TEST_DATABASE_URL.startswith("sqlite"):
+        # メモリ上のSQLiteは接続ごとに別のDBになるので、StaticPoolで1つの接続を共有する
+        engine = make_engine(TEST_DATABASE_URL, poolclass=StaticPool)
+    else:
+        engine = make_engine(TEST_DATABASE_URL)
     Base.metadata.create_all(engine)
-    yield sessionmaker(bind=engine)
-    engine.dispose()
+    try:
+        yield sessionmaker(bind=engine)
+    finally:
+        Base.metadata.drop_all(engine)
+        engine.dispose()
 
 
 @pytest.fixture

@@ -7,12 +7,14 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import inspect
 from sqlalchemy.orm import Session, sessionmaker
 
 from ledger.chart_of_accounts import seed_accounts
 from ledger.config import Settings
-from ledger.db import Base, make_engine
+from ledger.db import make_engine
 from ledger.errors import ConflictError, LedgerError, NotFoundError, RuleViolationError
+from ledger.models import Account
 from ledger.routers import accounts, bank_import, demo, journal_entries, reports
 from ledger.services.demo import load_demo_data_if_empty
 
@@ -48,7 +50,11 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # 起動時の準備（以前は import した時点で実行していたので、テストでも実行されていた）
         with factory() as db:
-            Base.metadata.create_all(db.get_bind())
+            # テーブルはアプリでは作らず、Alembicのマイグレーションで作る
+            if not inspect(db.get_bind()).has_table(Account.__tablename__):
+                raise RuntimeError(
+                    "テーブルがありません。先に `uv run alembic upgrade head` を実行してください"
+                )
             seed_accounts(db)
             if settings.demo_mode:
                 load_demo_data_if_empty(db)

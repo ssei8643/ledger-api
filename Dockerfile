@@ -6,12 +6,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY alembic.ini ./
+COPY migrations ./migrations
 COPY src ./src
 ENV PYTHONPATH=/app/src
 
-# データベースはこのフォルダに置き、docker compose でボリュームをつなぐ
+# DATABASE_URL を指定しなければSQLiteを使う（docker compose ではPostgreSQLを指定する）
 RUN mkdir -p /app/data
 ENV DATABASE_URL=sqlite:////app/data/ledger.db
 
 EXPOSE 8000
-CMD ["uvicorn", "ledger.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 起動のたびにマイグレーションを最新まで実行してから、APIサーバーを起動する
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn ledger.main:app --host 0.0.0.0 --port 8000"]

@@ -34,11 +34,13 @@
 ## 使った技術
 
 - フロントエンド：TypeScript、React、Vite
-- バックエンド：Python、FastAPI、SQLAlchemy、SQLite
+- バックエンド：Python、FastAPI、SQLAlchemy、Alembic
+- データベース：PostgreSQL（Docker Compose）、SQLite（開発・デモ）
 - AI：Claude API（Claude Haiku 5.5）
-- テスト：pytest（62件）
+- テスト：pytest（68件。SQLiteとPostgreSQLの両方で実行）
+- CI：GitHub Actions（テスト・Ruffによるコードチェック・マイグレーションの確認・フロントエンドのビルド）
 - 公開：Render
-- 開発環境：Docker（docker compose）
+- 開発環境：Docker Compose（API・フロントエンド・PostgreSQL）
 
 ## 設計で気をつけたこと
 
@@ -53,6 +55,12 @@
 
 **存在しない勘定科目はデータベースでも拒否する**
 勘定科目が登録済みかどうかはAPIで確認したうえで、データベースにも外部キー制約を付けています。SQLiteは外部キー制約を既定では検査しないため、接続するたびに有効にしています。
+
+**SQLiteとPostgreSQLの両方で動くようにした**
+開発や無料のデモではSQLite、Docker ComposeではPostgreSQLを使っています。日付から月を取り出す集計のように、データベースによって書き方が変わる処理は避けました。CIでは同じテストを両方のデータベースで実行しています。
+
+**テーブルの変更はマイグレーションで管理する**
+テーブルはアプリの起動時には作らず、Alembicのマイグレーションで作ります。CIでは、モデルの定義とマイグレーションにずれがないか（`alembic check`）も確認しています。
 
 **仕訳は修正・削除できないようにした**
 会計では、記帳した内容を消さずに訂正仕訳で直すのが原則なので、それに合わせました。
@@ -82,6 +90,7 @@ src/ledger/
 ├── services/             # 仕訳・帳簿の集計・銀行明細の取り込みなどの処理
 ├── bank_csv.py           # 銀行ごとのCSVの形式差を吸収する
 └── ai_suggest.py         # AIによる勘定科目の推測
+migrations/               # Alembicのマイグレーション
 tests/                    # 機能ごとのテスト
 ```
 
@@ -92,15 +101,16 @@ tests/                    # 機能ごとのテスト
 - **プロジェクトのフォルダを消してしまった**
   PCの整理中に誤って削除してしまいましたが、GitHubにこまめにpushしていたので、すぐに元に戻せました。
 - **テーブルに列を追加したらエラーになった**
-  既存のデータベースに新しい列がなかったのが原因でした。今はデータベースを作り直していますが、実際に使うサービスならマイグレーションの仕組みが必要だと分かりました。
+  既存のデータベースに新しい列がなかったのが原因でした。最初はデータベースを作り直していましたが、実際に使うサービスならマイグレーションの仕組みが必要だと分かり、Alembicを導入しました。
 - **AIの推測を試したら、科目が空欄のままだった**
   ログを見ると認証エラー（401）になっていて、APIキーを正しく設定できていないのが原因でした。このときも取り込みの画面は普通に動いていたので、AIが使えないときは空欄に戻す作りにしておいてよかったと感じました。
 
 ## ローカルで動かす
 
 ```bash
-# バックエンド
+# バックエンド（DATABASE_URL を設定しなければ、SQLiteの ledger.db を使います）
 uv sync
+uv run alembic upgrade head   # テーブルを作る・最新の状態にする
 uv run fastapi dev src/ledger/main.py
 
 # フロントエンド（別のターミナルで）
@@ -109,7 +119,7 @@ npm install
 npm run dev
 ```
 
-テストは `uv run pytest -v` で実行できます。
+PostgreSQLを使う場合は、`docker compose up -d db` でデータベースだけを起動し、`DATABASE_URL` を設定してから上のコマンドを実行します（PowerShellなら `$env:DATABASE_URL = "postgresql+psycopg://ledger:ledger@localhost:5432/ledger"`）。
 
 AIによる科目の推測を使う場合は、バックエンドを起動する前に環境変数 `ANTHROPIC_API_KEY` を設定してください。設定しなければ、AIを使わずに動きます。APIキーはコードやGitHubには書かず、環境変数だけで管理しています。
 
@@ -119,13 +129,21 @@ $env:ANTHROPIC_API_KEY = "取得したAPIキー"
 uv run fastapi dev src/ledger/main.py
 ```
 
+**開発で使うコマンド**
+
+```bash
+uv run pytest -v                                    # テスト
+uvx ruff check . ; uvx ruff format .                # コードのチェックと整形
+uv run alembic revision --autogenerate -m "説明"     # models.py を変えたあと、マイグレーションを作る
+```
+
 ## Dockerで動かす
 
 ```bash
 docker compose up --build
 ```
 
-起動したら http://localhost:8080 を開いてください（APIは http://localhost:8000 ）。データはDockerのボリュームに保存されるので、コンテナを作り直しても消えません。
+起動したら http://localhost:8080 を開いてください（APIは http://localhost:8000 ）。データベースにはPostgreSQLを使い、データはDockerのボリュームに保存されるので、コンテナを作り直しても消えません。起動のたびにマイグレーションが自動で実行されます。
 
 ## 開発の進め方
 
@@ -142,7 +160,6 @@ docker compose up --build
 - 総勘定元帳と、取消操作の画面
 - 先頭に口座情報などの行があるCSVへの対応
 - 年度・期間を指定した財務諸表と、決算整理
-- マイグレーションの仕組み（Alembicなど）の導入
 - 消費税の扱い
 - エラー時の部分表示（Error Boundary）
 - ログイン機能と、事業者ごとのデータの分離

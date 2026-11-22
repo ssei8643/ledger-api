@@ -26,8 +26,52 @@ jobs:
       - name: フォーマットの確認（Ruff）
         run: uvx ruff@0.16.9 format --check .
 
-      - name: テスト（pytest）
+      - name: テスト（pytest・SQLite）
         run: uv run pytest -v
+
+  # 本番と同じPostgreSQLで、マイグレーションとテストを確認する
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: ledger
+          POSTGRES_PASSWORD: ledger
+          POSTGRES_DB: ledger
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ledger"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://ledger:ledger@localhost:5432/ledger
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: 依存ライブラリのインストール
+        run: uv sync --locked
+
+      - name: マイグレーションを最新まで実行
+        run: uv run alembic upgrade head
+
+      # models.py を変えたのにマイグレーションを作り忘れていたら失敗する
+      - name: モデルの定義とマイグレーションにずれがないか確認
+        run: uv run alembic check
+
+      - name: マイグレーションを最初まで戻せるか確認
+        run: uv run alembic downgrade base
+
+      - name: テスト（pytest・PostgreSQL）
+        run: uv run pytest -v
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://ledger:ledger@localhost:5432/ledger
 
   frontend:
     runs-on: ubuntu-latest

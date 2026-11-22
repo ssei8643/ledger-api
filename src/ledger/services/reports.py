@@ -1,6 +1,6 @@
 """帳簿・財務諸表の集計（試算表・総勘定元帳・損益計算書・貸借対照表・月別集計）"""
 
-from sqlalchemy import String, case, cast, func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from ledger.chart_of_accounts import CATEGORY_NORMAL_SIDE, CATEGORY_ORDER
@@ -161,21 +161,25 @@ def financial_statements(db: Session) -> FinancialStatements:
 
 # ===== 月別の収益・費用 =====
 def monthly_summary(db: Session) -> list[MonthlySummary]:
-    # 日付 "2026-11-05" の先頭7文字 "2026-11" を「月」として使う
-    month = func.substr(cast(JournalEntry.entry_date, String), 1, 7)
+    # データベースでは日付ごとに集計し、月へのまとめはPythonで行う。
+    # （日付を文字列にして切り出す方法は、SQLiteとPostgreSQLで書き方や結果が変わるため）
     stmt = (
-        select(month, Account.category, JournalLine.side, func.sum(JournalLine.amount))
+        select(
+            JournalEntry.entry_date,
+            Account.category,
+            JournalLine.side,
+            func.sum(JournalLine.amount),
+        )
         .select_from(JournalLine)
         .join(JournalEntry, JournalLine.entry_id == JournalEntry.id)
         .join(Account, Account.name == JournalLine.account)
         .where(Account.category.in_(["収益", "費用"]))
-        .group_by(month, Account.category, JournalLine.side)
-        .order_by(month)
+        .group_by(JournalEntry.entry_date, Account.category, JournalLine.side)
     )
 
     totals: dict[str, dict[str, int]] = {}
-    for m, category, side, amount in db.execute(stmt).all():
-        t = totals.setdefault(m, {"revenue": 0, "expense": 0})
+    for entry_date, category, side, amount in db.execute(stmt).all():
+        t = totals.setdefault(entry_date.strftime("%Y-%m"), {"revenue": 0, "expense": 0})
         if category == "収益":
             t["revenue"] += amount if side == "credit" else -amount
         else:
@@ -183,10 +187,10 @@ def monthly_summary(db: Session) -> list[MonthlySummary]:
 
     return [
         MonthlySummary(
-            month=m,
+            month=month,
             revenue=t["revenue"],
             expense=t["expense"],
             net_income=t["revenue"] - t["expense"],
         )
-        for m, t in totals.items()
+        for month, t in sorted(totals.items())
     ]

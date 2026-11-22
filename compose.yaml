@@ -1,15 +1,35 @@
 services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ledger
+      POSTGRES_PASSWORD: ledger
+      POSTGRES_DB: ledger
+    ports:
+      # ローカルで `uv run fastapi dev` するときも、このデータベースを使える
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledger"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     build: .
     ports:
       - "8000:8000"
     environment:
+      DATABASE_URL: postgresql+psycopg://ledger:ledger@db:5432/ledger
       DEMO_MODE: "1"
       FRONTEND_ORIGIN: http://localhost:8080
       # AIによる科目の推測を使う場合だけ、起動する前にPowerShellで $env:ANTHROPIC_API_KEY を設定しておく
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-    volumes:
-      - ledger-data:/app/data
+    depends_on:
+      db:
+        # データベースが接続を受け付けるようになってから起動する
+        condition: service_healthy
 
   frontend:
     build:
@@ -22,4 +42,4 @@ services:
       - backend
 
 volumes:
-  ledger-data:
+  pg-data:
