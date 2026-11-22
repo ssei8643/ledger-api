@@ -24,7 +24,9 @@ from sqlalchemy.orm import (
 )
 
 # ===== データベース接続 =====
-engine = create_engine("sqlite:///./ledger.db", connect_args={"check_same_thread": False})
+# データベースの場所は環境変数で切り替える（Dockerではボリューム内に置く）
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./ledger.db")
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine)
 
 
