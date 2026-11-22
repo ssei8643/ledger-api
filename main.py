@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from datetime import date
 from typing import Literal
 
+from ai_suggest import suggest_accounts_with_ai
 from bank_csv import BankCsvError, parse_bank_csv
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -70,6 +71,12 @@ DEFAULT_ACCOUNTS = [
     ("旅費交通費", "費用"),
     ("減価償却費", "費用"),
     ("貸倒引当金繰入額", "費用"),
+    ("会議費", "費用"),
+    ("接待交際費", "費用"),
+    ("水道光熱費", "費用"),
+    ("地代家賃", "費用"),
+    ("新聞図書費", "費用"),
+    ("雑費", "費用"),
     # 評価勘定：分類は資産だが、残高は貸方に出る（3つ目の値で残高の向きを上書き）
     ("減価償却累計額", "資産", "credit"),
     ("貸倒引当金", "資産", "credit"),
@@ -715,6 +722,8 @@ class BankDraft(BaseModel):
     direction: Literal["in", "out"]
     amount: int = Field(gt=0)
     account: str | None = None
+    # 誰が推測した科目か（"rule"：キーワードのルール、"ai"：AI、None：推測なし）
+    suggested_by: Literal["rule", "ai"] | None = None
     already_imported: bool = False
 
 
@@ -738,6 +747,8 @@ def preview_bank_import(payload: BankImportRequest, db: Session = Depends(get_db
         seen[base] = seen.get(base, 0) + 1
         import_key = hashlib.sha256(f"{base}|{seen[base]}".encode()).hexdigest()
 
+        # ① まずキーワードのルールで推測する（無料・すぐ終わる・結果が毎回同じ）
+        account = suggest_account(r.description, r.direction)
         drafts.append(
             BankDraft(
                 import_key=import_key,
@@ -745,7 +756,8 @@ def preview_bank_import(payload: BankImportRequest, db: Session = Depends(get_db
                 description=r.description,
                 direction=r.direction,
                 amount=r.amount,
-                account=suggest_account(r.description, r.direction),
+                account=account,
+                suggested_by="rule" if account else None,
             )
         )
 
@@ -754,6 +766,20 @@ def preview_bank_import(payload: BankImportRequest, db: Session = Depends(get_db
     existing = set(db.scalars(select(JournalEntry.import_key).where(JournalEntry.import_key.in_(keys))))
     for d in drafts:
         d.already_imported = d.import_key in existing
+
+    # ② ルールで推測できず、まだ取り込んでいない明細だけをAIに推測させる
+    #    （APIキーがない・エラーのときは何もせず、科目は空欄のまま人が選ぶ）
+    targets = [d for d in drafts if d.account is None and not d.already_imported]
+    if targets:
+        candidates = [name for name in db.scalars(select(Account.name)) if name != BANK_ACCOUNT]
+        ai_accounts = suggest_accounts_with_ai(
+            [(d.description, d.direction) for d in targets], candidates
+        )
+        for d in targets:
+            account = ai_accounts.get((d.description, d.direction))
+            if account:
+                d.account = account
+                d.suggested_by = "ai"
     return drafts
 
 

@@ -1,3 +1,5 @@
 __pycache__/
 .venv/
 *.db
+# APIキーなどを書いたファイルは絶対にGitHubに上げない
+.env

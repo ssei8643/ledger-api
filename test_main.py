@@ -573,3 +573,56 @@ def test_ATMは入金なら事業主借と推測される(client):
 def test_CSVの見出しが違うとエラーになる(client):
     res = client.post("/bank-import/preview", json={"csv_text": "date,memo,out,in\n"})
     assert res.status_code == 422
+
+# ===== AIによる勘定科目の推測のテスト（本物のAIは呼ばず、偽の応答を使う） =====
+def use_fake_ai(monkeypatch, answer_for):
+    """摘要ごとの答えを決めた偽のAIを使う。AIに渡された内容を記録して返す"""
+    import ai_suggest
+
+    sent = []
+
+    def fake(items, accounts):
+        sent.extend(items)
+        return [
+            {"index": i, "account": answer_for[desc]}
+            for i, (desc, _direction) in enumerate(items)
+            if desc in answer_for
+        ]
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(ai_suggest, "_ask_claude", fake)
+    return sent
+
+
+def test_ルールで推測できない明細だけAIが推測し印がつく(client, monkeypatch):
+    sent = use_fake_ai(monkeypatch, {"ﾎｰﾑｾﾝﾀｰ ｶｲﾓﾉ": "消耗品費"})
+    drafts = preview_drafts(client)
+
+    assert [d["account"] for d in drafts] == ["売掛金", "通信費", "消耗品費"]
+    assert [d["suggested_by"] for d in drafts] == ["rule", "rule", "ai"]
+    # AIに送るのはルールで推測できなかった明細の摘要と入出金だけ（日付や金額は送らない）
+    assert sent == [("ﾎｰﾑｾﾝﾀｰ ｶｲﾓﾉ", "out")]
+
+
+def test_APIキーがなければ今まで通り空欄のまま(client):
+    drafts = preview_drafts(client)
+    assert drafts[2]["account"] is None
+    assert drafts[2]["suggested_by"] is None
+
+
+def test_取り込み済みの明細はAIに送らない(client, monkeypatch):
+    drafts = preview_drafts(client)
+    drafts[2]["account"] = "消耗品費"
+    client.post("/bank-import", json={"drafts": drafts})
+
+    sent = use_fake_ai(monkeypatch, {"ﾎｰﾑｾﾝﾀｰ ｶｲﾓﾉ": "消耗品費"})
+    preview_drafts(client)
+    assert sent == []
+
+
+def test_AIが推測した科目も登録時には普通にチェックされる(client, monkeypatch):
+    use_fake_ai(monkeypatch, {"ﾎｰﾑｾﾝﾀｰ ｶｲﾓﾉ": "消耗品費"})
+    drafts = preview_drafts(client)
+    # 画面で人が書き換えた場合も、未登録の科目はこれまで通り拒否される
+    drafts[2]["account"] = "存在しない科目"
+    assert client.post("/bank-import", json={"drafts": drafts}).status_code == 422

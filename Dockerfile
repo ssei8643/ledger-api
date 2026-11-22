@@ -6,7 +6,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py bank_csv.py ./
+COPY main.py bank_csv.py ai_suggest.py ./
 
 # データベースはこのフォルダに置き、docker compose でボリュームをつなぐ
 RUN mkdir -p /app/data
