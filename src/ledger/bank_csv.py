@@ -10,6 +10,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import date
+from typing import Literal
 
 
 class BankCsvError(ValueError):
@@ -20,7 +21,7 @@ class BankCsvError(ValueError):
 class BankRow:
     entry_date: date
     description: str
-    direction: str  # "in"（入金）または "out"（出金）
+    direction: Literal["in", "out"]  # 入金・出金
     amount: int
 
 
@@ -71,6 +72,11 @@ def parse_amount(value: str) -> int:
     return int(text)
 
 
+def _cell(row: list[str], col: int | None) -> str:
+    # 列が見つからない・行の列数が足りないときは空欄として扱う
+    return row[col] if col is not None and col < len(row) else ""
+
+
 def parse_bank_csv(text: str) -> list[BankRow]:
     rows = list(csv.reader(io.StringIO(text.lstrip("﻿"))))
     if not rows:
@@ -93,22 +99,19 @@ def parse_bank_csv(text: str) -> list[BankRow]:
 
     result = []
     for row_no, row in enumerate(rows[1:], start=2):
-        if not any(cell.strip() for cell in row):
+        if not any(value.strip() for value in row):
             continue  # 末尾の空行などは飛ばす
 
-        def cell(col: int | None) -> str:
-            return row[col] if col is not None and col < len(row) else ""
-
         try:
-            entry_date = parse_date(cell(date_col))
+            entry_date = parse_date(_cell(row, date_col))
             if two_columns:
-                out_amount = parse_amount(cell(out_col))
-                in_amount = parse_amount(cell(in_col))
+                out_amount = parse_amount(_cell(row, out_col))
+                in_amount = parse_amount(_cell(row, in_col))
             else:
-                signed = parse_amount(cell(signed_col))
+                signed = parse_amount(_cell(row, signed_col))
                 out_amount, in_amount = max(-signed, 0), max(signed, 0)
-        except ValueError:
-            raise BankCsvError(f"{row_no}行目の日付または金額を読み取れません")
+        except ValueError as e:
+            raise BankCsvError(f"{row_no}行目の日付または金額を読み取れません") from e
 
         if out_amount > 0 and in_amount == 0:
             direction, amount = "out", out_amount
@@ -117,7 +120,7 @@ def parse_bank_csv(text: str) -> list[BankRow]:
         else:
             raise BankCsvError(f"{row_no}行目は出金か入金のどちらか一方を入力してください")
 
-        parts = [cell(desc_col).strip(), cell(extra_col).strip()]
+        parts = [_cell(row, desc_col).strip(), _cell(row, extra_col).strip()]
         description = " ".join(p for p in parts if p)
 
         result.append(BankRow(entry_date, description, direction, amount))
