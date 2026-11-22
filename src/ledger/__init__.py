@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from ledger!")
+"""個人事業主向けの複式簿記アプリ（バックエンド）"""

@@ -1,7 +1,7 @@
 [project]
 name = "ledger"
 version = "0.1.0"
-description = "Add your description here"
+description = "個人事業主向けの複式簿記アプリのAPI（FastAPI + SQLAlchemy）"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -9,9 +9,6 @@ dependencies = [
     "fastapi[standard]>=0.156.7",
     "sqlalchemy>=2.1.6",
 ]
-
-[project.scripts]
-ledger = "ledger:main"
 
 [build-system]
 requires = ["uv_build>=0.13.4,<0.14.0"]
@@ -21,3 +18,11 @@ build-backend = "uv_build"
 dev = [
     "pytest>=9.1.1",
 ]
+
+# Lint・フォーマットは `uvx ruff check .` と `uvx ruff format .` で実行する
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+# E/F：基本的な誤り、I：importの並び順、B：バグになりやすい書き方、UP：新しいPythonの書き方
+select = ["E4", "E7", "E9", "F", "I", "B", "UP"]

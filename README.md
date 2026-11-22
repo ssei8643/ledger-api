@@ -1,5 +1,7 @@
 # ledger-api
 
+[![CI](https://github.com/ssei8643/ledger-api/actions/workflows/ci.yml/badge.svg)](https://github.com/ssei8643/ledger-api/actions/workflows/ci.yml)
+
 個人事業主向けの複式簿記アプリです。仕訳を入力すると、借方と貸方が合っているかを自動でチェックして、試算表や損益計算書まで作ってくれます。
 
 - デモ：https://ledger-frontend-5d86.onrender.com
@@ -107,7 +109,7 @@ docker compose up --build
 
 ## 開発の進め方
 
-後半は、mainブランチに直接pushせず、ブランチを切ってプルリクエストを出し、レビューで承認されてからマージする形にしました。GitHubのルールセットでmainへの直接pushを禁止し、プルリクエストのテンプレートにテストとビルドの確認項目を入れています。
+後半は、mainブランチに直接pushせず、ブランチを切ってプルリクエストを出し、レビューで承認されてからマージする形にしました。GitHubのルールセットでmainへの直接pushを禁止しています。プルリクエストを出すと、GitHub Actionsでテスト・Ruffによるコードチェック・フロントエンドのビルドが自動で実行されます。
 
 ## AIの使い方
 
@@ -118,7 +120,6 @@ docker compose up --build
 ## これからやりたいこと
 
 - 総勘定元帳と、取消操作の画面
-- GitHub Actionsでテストとビルドを自動で実行する（CI）
 - 先頭に口座情報などの行があるCSVへの対応
 - 年度・期間を指定した財務諸表と、決算整理
 - マイグレーションの仕組み（Alembicなど）の導入

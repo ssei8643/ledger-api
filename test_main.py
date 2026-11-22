@@ -78,20 +78,26 @@ def test_複合仕訳を登録できる(client):
 
 
 def test_貸借が一致しない仕訳は拒否され保存もされない(client):
-    bad = {**SIMPLE_ENTRY, "lines": [
-        {"account": "消耗品費", "side": "debit", "amount": 1100},
-        {"account": "現金", "side": "credit", "amount": 1000},
-    ]}
+    bad = {
+        **SIMPLE_ENTRY,
+        "lines": [
+            {"account": "消耗品費", "side": "debit", "amount": 1100},
+            {"account": "現金", "side": "credit", "amount": 1000},
+        ],
+    }
     res = client.post("/journal-entries", json=bad)
     assert res.status_code == 422
     assert client.get("/journal-entries").json() == []
 
 
 def test_金額が0以下の明細は拒否される(client):
-    bad = {**SIMPLE_ENTRY, "lines": [
-        {"account": "消耗品費", "side": "debit", "amount": 0},
-        {"account": "現金", "side": "credit", "amount": 0},
-    ]}
+    bad = {
+        **SIMPLE_ENTRY,
+        "lines": [
+            {"account": "消耗品費", "side": "debit", "amount": 0},
+            {"account": "現金", "side": "credit", "amount": 0},
+        ],
+    }
     res = client.post("/journal-entries", json=bad)
     assert res.status_code == 422
 
@@ -112,7 +118,11 @@ def test_試算表の借方合計と貸方合計が一致する(client):
 
     balances = {r["account"]: r for r in tb["rows"]}
     assert balances["普通預金"]["debit_balance"] == 10780
-    assert balances["売掛金"]["credit_balance"] == 11000# ===== 勘定科目マスタと残高警告のテスト =====
+    assert (
+        balances["売掛金"]["credit_balance"] == 11000
+    )  # ===== 勘定科目マスタと残高警告のテスト =====
+
+
 OPENING_ENTRY = {
     "entry_date": "2026-10-01",
     "description": "開始仕訳（期首残高）",
@@ -125,10 +135,13 @@ OPENING_ENTRY = {
 
 
 def test_未登録の勘定科目は拒否され保存もされない(client):
-    bad = {**SIMPLE_ENTRY, "lines": [
-        {"account": "消耗品費", "side": "debit", "amount": 1100},
-        {"account": "現全", "side": "credit", "amount": 1100},
-    ]}
+    bad = {
+        **SIMPLE_ENTRY,
+        "lines": [
+            {"account": "消耗品費", "side": "debit", "amount": 1100},
+            {"account": "現全", "side": "credit", "amount": 1100},
+        ],
+    }
     res = client.post("/journal-entries", json=bad)
     assert res.status_code == 422
     assert "現全" in res.json()["detail"]
@@ -158,7 +171,7 @@ def test_開始仕訳を登録すると警告が消える(client):
     assert rows["現金"]["debit_balance"] == 48900
     assert tb["debit_total"] == 73100
     assert tb["credit_total"] == 73100
-    
+
 
 # ===== 訂正仕訳のテスト =====
 REVERSE_REQUEST = {"entry_date": "2026-10-28", "reason": "金額誤り"}
@@ -170,7 +183,7 @@ def test_仕訳を取り消すと貸借が逆の仕訳が作られる(client):
     assert res.status_code == 201
     body = res.json()
     assert body["reverses_id"] == 1
-    sides = {l["account"]: l["side"] for l in body["lines"]}
+    sides = {line["account"]: line["side"] for line in body["lines"]}
     assert sides == {"消耗品費": "credit", "現金": "debit"}
 
 
@@ -200,10 +213,13 @@ def test_取消仕訳はさらに取り消せない(client):
 
 
 def test_同じ勘定科目を借方と貸方の両方に使う仕訳は拒否される(client):
-    bad = {**SIMPLE_ENTRY, "lines": [
-        {"account": "現金", "side": "debit", "amount": 1000},
-        {"account": "現金", "side": "credit", "amount": 1000},
-    ]}
+    bad = {
+        **SIMPLE_ENTRY,
+        "lines": [
+            {"account": "現金", "side": "debit", "amount": 1000},
+            {"account": "現金", "side": "credit", "amount": 1000},
+        ],
+    }
     res = client.post("/journal-entries", json=bad)
     assert res.status_code == 422
     assert client.get("/journal-entries").json() == []
@@ -292,6 +308,7 @@ def test_減価償却累計額は貸借対照表で資産から差し引かれ�
     assert bs["total_liabilities_and_equity"] == 61000 - 5000
     assert bs["is_balanced"] is True
 
+
 # ===== 総勘定元帳のテスト =====
 def test_総勘定元帳で残高の推移がわかる(client):
     client.post("/journal-entries", json=OPENING_ENTRY)
@@ -345,6 +362,8 @@ def test_貸借対照表は当期純利益を含めて左右が一致する(clie
     assert bs["is_balanced"] is True
 
     # ===== サンプルデータのテスト =====
+
+
 def test_サンプルデータを読み込むと財務諸表が作られる(client):
     res = client.post("/demo-data")
     assert res.status_code == 201
@@ -371,6 +390,7 @@ def test_仕訳があるとサンプルデータは読み込めない(client):
     client.post("/journal-entries", json=SIMPLE_ENTRY)
     assert client.post("/demo-data").status_code == 409
 
+
 # ===== テンプレートのテスト =====
 def test_テンプレートの科目はすべて勘定科目マスタに存在する(client):
     templates = client.get("/templates").json()
@@ -381,11 +401,12 @@ def test_テンプレートの科目はすべて勘定科目マスタに存在�
         for line in t["lines"]:
             assert line["account"] in account_names
 
+
 # ===== 月別集計のテスト =====
 def test_月別に収益と費用が集計される(client):
     client.post("/journal-entries", json=OPENING_ENTRY)  # 収益・費用を含まない
-    client.post("/journal-entries", json=SIMPLE_ENTRY)   # 10月：消耗品費 1,100
-    client.post("/journal-entries", json=SALES_ENTRY)    # 11月：売上高 33,000
+    client.post("/journal-entries", json=SIMPLE_ENTRY)  # 10月：消耗品費 1,100
+    client.post("/journal-entries", json=SALES_ENTRY)  # 11月：売上高 33,000
 
     rows = client.get("/monthly-summary").json()
     assert rows == [
@@ -401,6 +422,7 @@ def test_サンプルデータの月別純利益は損益計算書と一致す�
 
     assert len(rows) == 1
     assert rows[0]["net_income"] == pl["net_income"]
+
 
 # ===== 銀行明細CSVの取り込みのテスト =====
 SAMPLE_CSV = (
@@ -480,11 +502,7 @@ def test_いろいろな日付の書き方を読み取れる(text):
 
 def test_列名や並び順が違うCSVも読み取れる():
     # 「取引日・入金・出金・備考」の順で、日付は区切りなし、新しい順に並んでいる
-    rows = parse_bank_csv(
-        "取引日,入金,出金,備考\n"
-        "20261210,,50000,ｼｮｳﾃﾝ\n"
-        "20261202,60000,,ﾜｲ ATM\n"
-    )
+    rows = parse_bank_csv("取引日,入金,出金,備考\n20261210,,50000,ｼｮｳﾃﾝ\n20261202,60000,,ﾜｲ ATM\n")
     assert [(r.entry_date.day, r.direction, r.amount) for r in rows] == [
         (2, "in", 60000),
         (10, "out", 50000),
@@ -493,17 +511,14 @@ def test_列名や並び順が違うCSVも読み取れる():
 
 def test_入出金が1列でマイナスが出金のCSVも読み取れる():
     rows = parse_bank_csv(
-        '日付,摘要,入出金（円）\n'
-        '2026/12/01,ﾌﾘｺﾐ ｴｰｼｬ,"88,000"\n'
-        '2026/12/03,ドコモ,"−5,500"\n'
+        '日付,摘要,入出金（円）\n2026/12/01,ﾌﾘｺﾐ ｴｰｼｬ,"88,000"\n2026/12/03,ドコモ,"−5,500"\n'
     )
     assert [(r.direction, r.amount) for r in rows] == [("in", 88000), ("out", 5500)]
 
 
 def test_金額の空欄やハイフンは0として扱い追加摘要はつなげる():
     rows = parse_bank_csv(
-        '勘定日,摘要,追加摘要,お引出し,お預入れ\n'
-        '2026年12月1日,ﾌﾘｺﾐ,ｴｰｼｬ,-,"1,000"\n'
+        '勘定日,摘要,追加摘要,お引出し,お預入れ\n2026年12月1日,ﾌﾘｺﾐ,ｴｰｼｬ,-,"1,000"\n'
     )
     assert rows[0].direction == "in"
     assert rows[0].amount == 1000
@@ -573,6 +588,7 @@ def test_ATMは入金なら事業主借と推測される(client):
 def test_CSVの見出しが違うとエラーになる(client):
     res = client.post("/bank-import/preview", json={"csv_text": "date,memo,out,in\n"})
     assert res.status_code == 422
+
 
 # ===== AIによる勘定科目の推測のテスト（本物のAIは呼ばず、偽の応答を使う） =====
 def use_fake_ai(monkeypatch, answer_for):

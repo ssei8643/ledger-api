@@ -1,0 +1,50 @@
+# プッシュ・プルリクエストのたびに、テスト・Lint・フロントエンドのビルドを自動で確認する
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      # uv.lock と pyproject.toml がずれていたら失敗させる（ロックファイルの更新忘れに気づける）
+      - name: 依存ライブラリのインストール
+        run: uv sync --locked
+
+      - name: Lint（Ruff）
+        run: uvx ruff@0.16.9 check .
+
+      - name: フォーマットの確認（Ruff）
+        run: uvx ruff@0.16.9 format --check .
+
+      - name: テスト（pytest）
+        run: uv run pytest -v
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 依存ライブラリのインストール
+        run: npm ci
+
+      - name: ビルド（型チェックを含む）
+        run: npm run build

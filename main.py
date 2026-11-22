@@ -1,19 +1,26 @@
-import os
 import hashlib
+import os
 import unicodedata
-
-from sqlalchemy.engine import Engine
-from sqlalchemy.exc import IntegrityError
 from datetime import date
-from typing import Literal
-
-from ai_suggest import suggest_accounts_with_ai
-from bank_csv import BankCsvError, parse_bank_csv
-from fastapi.middleware.cors import CORSMiddleware
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import CheckConstraint, Date, ForeignKey, String, case, cast, create_engine, event, func, select
+from sqlalchemy import (
+    CheckConstraint,
+    Date,
+    ForeignKey,
+    String,
+    case,
+    cast,
+    create_engine,
+    event,
+    func,
+    select,
+)
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -23,6 +30,9 @@ from sqlalchemy.orm import (
     selectinload,
     sessionmaker,
 )
+
+from ai_suggest import suggest_accounts_with_ai
+from bank_csv import BankCsvError, parse_bank_csv
 
 # ===== データベース接続 =====
 # データベースの場所は環境変数で切り替える（Dockerではボリューム内に置く）
@@ -85,10 +95,9 @@ DEFAULT_ACCOUNTS = [
 
 class Account(Base):
     """勘定科目"""
+
     __tablename__ = "accounts"
-    __table_args__ = (
-        CheckConstraint("normal_side IN ('debit', 'credit')", name="ck_normal_side"),
-    )
+    __table_args__ = (CheckConstraint("normal_side IN ('debit', 'credit')", name="ck_normal_side"),)
 
     name: Mapped[str] = mapped_column(String(50), primary_key=True)
     category: Mapped[str] = mapped_column(String(10))
@@ -99,18 +108,22 @@ class Account(Base):
 # ===== 仕訳 =====
 class JournalEntry(Base):
     """仕訳本体"""
+
     __tablename__ = "journal_entries"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     entry_date: Mapped[date] = mapped_column(Date)
     description: Mapped[str] = mapped_column(String(200))
-    reverses_id: Mapped[int | None] = mapped_column(ForeignKey("journal_entries.id"), unique=True, default=None)
+    reverses_id: Mapped[int | None] = mapped_column(
+        ForeignKey("journal_entries.id"), unique=True, default=None
+    )
     import_key: Mapped[str | None] = mapped_column(String(64), unique=True, default=None)
     lines: Mapped[list["JournalLine"]] = relationship(back_populates="entry")
 
 
 class JournalLine(Base):
     """仕訳明細"""
+
     __tablename__ = "journal_lines"
     __table_args__ = (
         CheckConstraint("amount > 0", name="ck_amount_positive"),
@@ -131,8 +144,8 @@ class UnbalancedEntryError(ValueError):
 
 
 def ensure_balanced(entry: JournalEntry) -> None:
-    debit = sum(l.amount for l in entry.lines if l.side == "debit")
-    credit = sum(l.amount for l in entry.lines if l.side == "credit")
+    debit = sum(line.amount for line in entry.lines if line.side == "debit")
+    credit = sum(line.amount for line in entry.lines if line.side == "credit")
     if len(entry.lines) < 2 or debit != credit:
         raise UnbalancedEntryError(
             f"貸借が一致しない仕訳は保存できません（借方 {debit}／貸方 {credit}）"
@@ -188,14 +201,14 @@ class JournalEntryCreate(BaseModel):
 
     @model_validator(mode="after")
     def check_balanced(self):
-        debit = sum(l.amount for l in self.lines if l.side == "debit")
-        credit = sum(l.amount for l in self.lines if l.side == "credit")
+        debit = sum(line.amount for line in self.lines if line.side == "debit")
+        credit = sum(line.amount for line in self.lines if line.side == "credit")
         if debit != credit:
             raise ValueError(f"借方合計 {debit} と貸方合計 {credit} が一致しません")
 
         # 同じ科目を借方と貸方の両方に使う仕訳は、打ち消し合うだけで意味がない
-        debit_accounts = {l.account for l in self.lines if l.side == "debit"}
-        credit_accounts = {l.account for l in self.lines if l.side == "credit"}
+        debit_accounts = {line.account for line in self.lines if line.side == "debit"}
+        credit_accounts = {line.account for line in self.lines if line.side == "credit"}
         same = sorted(debit_accounts & credit_accounts)
         if same:
             raise ValueError(
@@ -262,21 +275,24 @@ def get_db():
         yield db
 
 
+DbSession = Annotated[Session, Depends(get_db)]
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
 
 @app.get("/accounts", response_model=list[AccountOut])
-def list_accounts(db: Session = Depends(get_db)):
+def list_accounts(db: DbSession):
     accounts = db.scalars(select(Account)).all()
     return sorted(accounts, key=lambda a: (CATEGORY_ORDER.index(a.category), a.name))
 
 
 @app.post("/journal-entries", status_code=201, response_model=JournalEntryOut)
-def create_journal_entry(payload: JournalEntryCreate, db: Session = Depends(get_db)):
+def create_journal_entry(payload: JournalEntryCreate, db: DbSession):
     # 未登録の勘定科目が含まれていないか確認
-    names = {l.account for l in payload.lines}
+    names = {line.account for line in payload.lines}
     known = set(db.scalars(select(Account.name).where(Account.name.in_(names))))
     unknown = sorted(names - known)
     if unknown:
@@ -286,8 +302,8 @@ def create_journal_entry(payload: JournalEntryCreate, db: Session = Depends(get_
         entry_date=payload.entry_date,
         description=payload.description,
         lines=[
-            JournalLine(account=l.account, side=l.side, amount=l.amount)
-            for l in payload.lines
+            JournalLine(account=line.account, side=line.side, amount=line.amount)
+            for line in payload.lines
         ],
     )
     db.add(entry)
@@ -297,7 +313,7 @@ def create_journal_entry(payload: JournalEntryCreate, db: Session = Depends(get_
 
 
 @app.get("/journal-entries", response_model=list[JournalEntryOut])
-def list_journal_entries(db: Session = Depends(get_db)):
+def list_journal_entries(db: DbSession):
     stmt = (
         select(JournalEntry)
         .options(selectinload(JournalEntry.lines))
@@ -307,7 +323,7 @@ def list_journal_entries(db: Session = Depends(get_db)):
 
 
 @app.get("/journal-entries/{entry_id}", response_model=JournalEntryOut)
-def get_journal_entry(entry_id: int, db: Session = Depends(get_db)):
+def get_journal_entry(entry_id: int, db: DbSession):
     entry = db.get(JournalEntry, entry_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="仕訳が見つかりません")
@@ -315,7 +331,7 @@ def get_journal_entry(entry_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/trial-balance", response_model=TrialBalance)
-def get_trial_balance(db: Session = Depends(get_db)):
+def get_trial_balance(db: DbSession):
     debit_sum = func.sum(case((JournalLine.side == "debit", JournalLine.amount), else_=0))
     credit_sum = func.sum(case((JournalLine.side == "credit", JournalLine.amount), else_=0))
     stmt = (
@@ -358,14 +374,11 @@ def get_trial_balance(db: Session = Depends(get_db)):
         credit_total=credit_total,
         debit_balance_total=debit_balance_total,
         credit_balance_total=credit_balance_total,
-        is_balanced=(
-            debit_total == credit_total
-            and debit_balance_total == credit_balance_total
-        ),
+        is_balanced=(debit_total == credit_total and debit_balance_total == credit_balance_total),
         warning_count=sum(1 for r in rows if r.warning),
     )
-    
-    
+
+
 # ===== 訂正仕訳（取消） =====
 class ReverseRequest(BaseModel):
     entry_date: date
@@ -373,7 +386,7 @@ class ReverseRequest(BaseModel):
 
 
 @app.post("/journal-entries/{entry_id}/reverse", status_code=201, response_model=JournalEntryOut)
-def reverse_journal_entry(entry_id: int, payload: ReverseRequest, db: Session = Depends(get_db)):
+def reverse_journal_entry(entry_id: int, payload: ReverseRequest, db: DbSession):
     original = db.get(JournalEntry, entry_id)
     if original is None:
         raise HTTPException(status_code=404, detail="仕訳が見つかりません")
@@ -382,7 +395,9 @@ def reverse_journal_entry(entry_id: int, payload: ReverseRequest, db: Session = 
 
     already = db.scalar(select(JournalEntry.id).where(JournalEntry.reverses_id == entry_id))
     if already is not None:
-        raise HTTPException(status_code=409, detail=f"この仕訳はすでに仕訳#{already}で取り消されています")
+        raise HTTPException(
+            status_code=409, detail=f"この仕訳はすでに仕訳#{already}で取り消されています"
+        )
 
     # 借方と貸方を入れ替えた仕訳を作る
     opposite = {"debit": "credit", "credit": "debit"}
@@ -391,8 +406,8 @@ def reverse_journal_entry(entry_id: int, payload: ReverseRequest, db: Session = 
         description=f"【取消】仕訳#{entry_id}：{payload.reason}",
         reverses_id=entry_id,
         lines=[
-            JournalLine(account=l.account, side=opposite[l.side], amount=l.amount)
-            for l in original.lines
+            JournalLine(account=line.account, side=opposite[line.side], amount=line.amount)
+            for line in original.lines
         ],
     )
     db.add(reversal)
@@ -402,9 +417,10 @@ def reverse_journal_entry(entry_id: int, payload: ReverseRequest, db: Session = 
         # 同じ仕訳への取消が同時に届き、確認のあとで先にもう一方が保存された場合。
         # reverses_id の一意制約で弾かれるので、500ではなく409として返す
         db.rollback()
-        raise HTTPException(status_code=409, detail="この仕訳はすでに取り消されています")
+        raise HTTPException(status_code=409, detail="この仕訳はすでに取り消されています") from None
     db.refresh(reversal)
     return reversal
+
 
 # ===== 総勘定元帳 =====
 class LedgerRow(BaseModel):
@@ -417,7 +433,7 @@ class LedgerRow(BaseModel):
 
 
 @app.get("/accounts/{account_name}/ledger", response_model=list[LedgerRow])
-def get_ledger(account_name: str, db: Session = Depends(get_db)):
+def get_ledger(account_name: str, db: DbSession):
     # 科目が存在しなければ404
     account = db.get(Account, account_name)
     if account is None:
@@ -454,6 +470,7 @@ def get_ledger(account_name: str, db: Session = Depends(get_db)):
         )
     return rows
 
+
 # ===== 損益計算書・貸借対照表 =====
 class StatementItem(BaseModel):
     account: str
@@ -484,7 +501,7 @@ class FinancialStatements(BaseModel):
 
 
 @app.get("/financial-statements", response_model=FinancialStatements)
-def get_financial_statements(db: Session = Depends(get_db)):
+def get_financial_statements(db: DbSession):
     debit_sum = func.sum(case((JournalLine.side == "debit", JournalLine.amount), else_=0))
     credit_sum = func.sum(case((JournalLine.side == "credit", JournalLine.amount), else_=0))
     stmt = (
@@ -536,40 +553,56 @@ def get_financial_statements(db: Session = Depends(get_db)):
         ),
     )
 
+
 # ===== サンプルデータ =====
 # 個人事業主（Webデザイナー）の1か月分の取引
 SAMPLE_ENTRIES = [
-    ("2026-11-01", "開始仕訳（期首残高）",
-     [("現金", "debit", 50000), ("普通預金", "debit", 300000), ("元入金", "credit", 350000)]),
-    ("2026-11-03", "A社 Webサイト制作（掛け）",
-     [("売掛金", "debit", 110000), ("売上高", "credit", 110000)]),
-    ("2026-11-05", "コピー用紙購入",
-     [("消耗品費", "debit", 1100), ("現金", "credit", 1100)]),
-    ("2026-11-07", "打ち合わせの電車代",
-     [("旅費交通費", "debit", 640), ("現金", "credit", 640)]),
-    ("2026-11-10", "スマホ代",
-     [("通信費", "debit", 5500), ("普通預金", "credit", 5500)]),
-    ("2026-11-12", "B社 バナー制作（振込）",
-     [("普通預金", "debit", 55000), ("売上高", "credit", 55000)]),
-    ("2026-11-15", "A社 売掛金入金（振込手数料差引）",
-     [("普通預金", "debit", 109340), ("支払手数料", "debit", 660), ("売掛金", "credit", 110000)]),
-    ("2026-11-18", "販売用素材の仕入（掛け）",
-     [("仕入高", "debit", 22000), ("買掛金", "credit", 22000)]),
-    ("2026-11-20", "生活費の引き出し",
-     [("事業主貸", "debit", 30000), ("普通預金", "credit", 30000)]),
-    ("2026-11-22", "打ち合わせの交通費",
-     [("旅費交通費", "debit", 1280), ("現金", "credit", 1280)]),
-    ("2026-11-25", "買掛金の支払い",
-     [("買掛金", "debit", 22000), ("普通預金", "credit", 22000)]),
-    ("2026-11-28", "C社 ロゴ制作（掛け）",
-     [("売掛金", "debit", 77000), ("売上高", "credit", 77000)]),
-    ("2026-11-30", "インターネット料金",
-     [("通信費", "debit", 4400), ("普通預金", "credit", 4400)]),
+    (
+        "2026-11-01",
+        "開始仕訳（期首残高）",
+        [("現金", "debit", 50000), ("普通預金", "debit", 300000), ("元入金", "credit", 350000)],
+    ),
+    (
+        "2026-11-03",
+        "A社 Webサイト制作（掛け）",
+        [("売掛金", "debit", 110000), ("売上高", "credit", 110000)],
+    ),
+    ("2026-11-05", "コピー用紙購入", [("消耗品費", "debit", 1100), ("現金", "credit", 1100)]),
+    ("2026-11-07", "打ち合わせの電車代", [("旅費交通費", "debit", 640), ("現金", "credit", 640)]),
+    ("2026-11-10", "スマホ代", [("通信費", "debit", 5500), ("普通預金", "credit", 5500)]),
+    (
+        "2026-11-12",
+        "B社 バナー制作（振込）",
+        [("普通預金", "debit", 55000), ("売上高", "credit", 55000)],
+    ),
+    (
+        "2026-11-15",
+        "A社 売掛金入金（振込手数料差引）",
+        [("普通預金", "debit", 109340), ("支払手数料", "debit", 660), ("売掛金", "credit", 110000)],
+    ),
+    (
+        "2026-11-18",
+        "販売用素材の仕入（掛け）",
+        [("仕入高", "debit", 22000), ("買掛金", "credit", 22000)],
+    ),
+    (
+        "2026-11-20",
+        "生活費の引き出し",
+        [("事業主貸", "debit", 30000), ("普通預金", "credit", 30000)],
+    ),
+    ("2026-11-22", "打ち合わせの交通費", [("旅費交通費", "debit", 1280), ("現金", "credit", 1280)]),
+    ("2026-11-25", "買掛金の支払い", [("買掛金", "debit", 22000), ("普通預金", "credit", 22000)]),
+    (
+        "2026-11-28",
+        "C社 ロゴ制作（掛け）",
+        [("売掛金", "debit", 77000), ("売上高", "credit", 77000)],
+    ),
+    ("2026-11-30", "インターネット料金", [("通信費", "debit", 4400), ("普通預金", "credit", 4400)]),
 ]
 
 
 @app.post("/demo-data", status_code=201)
-def load_demo_data(db: Session = Depends(get_db)):
+def load_demo_data(db: DbSession):
     # すでに仕訳がある場合は、実データと混ざらないよう読み込まない
     if db.scalar(select(func.count(JournalEntry.id))) > 0:
         raise HTTPException(
@@ -589,8 +622,8 @@ def load_demo_data(db: Session = Depends(get_db)):
                 entry_date=payload.entry_date,
                 description=payload.description,
                 lines=[
-                    JournalLine(account=l.account, side=l.side, amount=l.amount)
-                    for l in payload.lines
+                    JournalLine(account=line.account, side=line.side, amount=line.amount)
+                    for line in payload.lines
                 ],
             )
         )
@@ -635,6 +668,7 @@ TEMPLATES = [
 def list_templates():
     return TEMPLATES
 
+
 # ===== 月別の収益・費用 =====
 class MonthlySummary(BaseModel):
     month: str
@@ -644,7 +678,7 @@ class MonthlySummary(BaseModel):
 
 
 @app.get("/monthly-summary", response_model=list[MonthlySummary])
-def get_monthly_summary(db: Session = Depends(get_db)):
+def get_monthly_summary(db: DbSession):
     # 日付 "2026-11-05" の先頭7文字 "2026-11" を「月」として使う
     month = func.substr(cast(JournalEntry.entry_date, String), 1, 7)
     stmt = (
@@ -674,6 +708,7 @@ def get_monthly_summary(db: Session = Depends(get_db)):
         )
         for m, t in totals.items()
     ]
+
 
 # ===== 銀行明細CSVの取り込み =====
 BANK_ACCOUNT = "普通預金"
@@ -732,12 +767,12 @@ class BankImportCommit(BaseModel):
 
 
 @app.post("/bank-import/preview", response_model=list[BankDraft])
-def preview_bank_import(payload: BankImportRequest, db: Session = Depends(get_db)):
+def preview_bank_import(payload: BankImportRequest, db: DbSession):
     # 銀行ごとの列名・日付・金額の書き方の違いは bank_csv.py で吸収する
     try:
         rows = parse_bank_csv(payload.csv_text)
     except BankCsvError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
     drafts = []
     seen: dict[str, int] = {}
@@ -763,7 +798,9 @@ def preview_bank_import(payload: BankImportRequest, db: Session = Depends(get_db
 
     # すでに取り込み済みの明細に印をつける
     keys = [d.import_key for d in drafts]
-    existing = set(db.scalars(select(JournalEntry.import_key).where(JournalEntry.import_key.in_(keys))))
+    existing = set(
+        db.scalars(select(JournalEntry.import_key).where(JournalEntry.import_key.in_(keys)))
+    )
     for d in drafts:
         d.already_imported = d.import_key in existing
 
@@ -784,7 +821,7 @@ def preview_bank_import(payload: BankImportRequest, db: Session = Depends(get_db
 
 
 @app.post("/bank-import", status_code=201)
-def commit_bank_import(payload: BankImportCommit, db: Session = Depends(get_db)):
+def commit_bank_import(payload: BankImportCommit, db: DbSession):
     if any(d.account is None for d in payload.drafts):
         raise HTTPException(status_code=422, detail="勘定科目が選ばれていない明細があります")
 
@@ -831,8 +868,11 @@ def commit_bank_import(payload: BankImportCommit, db: Session = Depends(get_db))
     except IntegrityError:
         # APIの確認をすり抜けた重複も、データベースの一意制約で防ぐ
         db.rollback()
-        raise HTTPException(status_code=409, detail="すでに取り込み済みの明細が含まれています")
+        raise HTTPException(
+            status_code=409, detail="すでに取り込み済みの明細が含まれています"
+        ) from None
     return {"created": len(payload.drafts)}
+
 
 # ===== デモ環境：起動時にデータが空ならサンプルデータを読み込む =====
 if os.getenv("DEMO_MODE") == "1":
