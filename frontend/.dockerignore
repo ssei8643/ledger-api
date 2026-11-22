@@ -1,9 +1,2 @@
-.git
-.venv
-__pycache__
-.pytest_cache
-*.db
-frontend
-docs
-samples
-src
+node_modules
+dist
