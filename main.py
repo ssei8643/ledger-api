@@ -1,13 +1,13 @@
 import os
-import csv
 import hashlib
-import io
 import unicodedata
 
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from datetime import date
 from typing import Literal
+
+from bank_csv import BankCsvError, parse_bank_csv
 from fastapi.middleware.cors import CORSMiddleware
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -672,6 +672,9 @@ BANK_ACCOUNT = "普通預金"
 # 摘要に含まれるキーワードから勘定科目を推測するルール
 OUT_RULES = [
     ("手数料", "支払手数料"),
+    # 銀行の半角カナでは小さい「ョ」が使えず「ﾃｽｳﾘﾖｳ」と書かれることがある
+    ("テスウリヨウ", "支払手数料"),
+    ("テスウリョウ", "支払手数料"),
     ("ドコモ", "通信費"),
     ("ソフトバンク", "通信費"),
     ("NTT", "通信費"),
@@ -681,9 +684,11 @@ OUT_RULES = [
     ("アマゾン", "消耗品費"),
     ("ATM", "事業主貸"),
 ]
+# 同じキーワードでも、入金か出金かで科目が変わる（例：ATMの出金は事業主貸、入金は事業主借）
 IN_RULES = [
     ("フリコミ", "売掛金"),
     ("振込", "売掛金"),
+    ("ATM", "事業主借"),
 ]
 
 
@@ -695,11 +700,6 @@ def suggest_account(description: str, direction: str) -> str | None:
         if keyword in text:
             return account
     return None
-
-
-def to_int(value: str | None) -> int:
-    value = (value or "").replace(",", "").strip()
-    return int(value) if value else 0
 
 
 class BankImportRequest(BaseModel):
@@ -722,42 +722,28 @@ class BankImportCommit(BaseModel):
 
 @app.post("/bank-import/preview", response_model=list[BankDraft])
 def preview_bank_import(payload: BankImportRequest, db: Session = Depends(get_db)):
-    reader = csv.DictReader(io.StringIO(payload.csv_text.lstrip("\ufeff")))
-    if reader.fieldnames is None or not {"日付", "摘要", "出金", "入金"} <= set(reader.fieldnames):
-        raise HTTPException(status_code=422, detail="CSVの1行目は「日付,摘要,出金,入金」にしてください")
+    # 銀行ごとの列名・日付・金額の書き方の違いは bank_csv.py で吸収する
+    try:
+        rows = parse_bank_csv(payload.csv_text)
+    except BankCsvError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
     drafts = []
     seen: dict[str, int] = {}
-    for row_no, row in enumerate(reader, start=2):
-        try:
-            entry_date = date.fromisoformat((row["日付"] or "").strip().replace("/", "-"))
-            out_amount = to_int(row["出金"])
-            in_amount = to_int(row["入金"])
-        except ValueError:
-            raise HTTPException(status_code=422, detail=f"{row_no}行目の日付または金額を読み取れません")
-
-        if out_amount > 0 and in_amount == 0:
-            direction, amount = "out", out_amount
-        elif in_amount > 0 and out_amount == 0:
-            direction, amount = "in", in_amount
-        else:
-            raise HTTPException(status_code=422, detail=f"{row_no}行目は出金か入金のどちらか一方を入力してください")
-
-        description = (row["摘要"] or "").strip()
-
+    for r in rows:
         # 同じ内容の明細が同じファイルに複数ある場合も区別できるよう、出現回数を含めてキーを作る
-        base = f"{entry_date}|{description}|{direction}|{amount}"
+        base = f"{r.entry_date}|{r.description}|{r.direction}|{r.amount}"
         seen[base] = seen.get(base, 0) + 1
         import_key = hashlib.sha256(f"{base}|{seen[base]}".encode()).hexdigest()
 
         drafts.append(
             BankDraft(
                 import_key=import_key,
-                entry_date=entry_date,
-                description=description,
-                direction=direction,
-                amount=amount,
-                account=suggest_account(description, direction),
+                entry_date=r.entry_date,
+                description=r.description,
+                direction=r.direction,
+                amount=r.amount,
+                account=suggest_account(r.description, r.direction),
             )
         )
 

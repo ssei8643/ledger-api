@@ -18,3 +18,27 @@ export function errorMessage(e: unknown): string {
   }
   return e instanceof Error ? e.message : String(e)
 }
+
+// POSTでJSONを送る。サーバーに接続できないときは例外になるので、呼び出し側で catch する
+export function postJson(path: string, body: unknown): Promise<Response> {
+  return fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+// エラーのレスポンスから、画面に出すメッセージを取り出す
+export async function detailText(res: Response): Promise<string> {
+  try {
+    const body = await res.json()
+    const detail = body.detail
+    if (typeof detail === "string") return detail
+    if (Array.isArray(detail)) {
+      return detail.map((d: { msg: string }) => d.msg).join(" / ")
+    }
+  } catch {
+    // JSONではない応答（起動中のサーバーが返すHTMLなど）は、下の文言にする
+  }
+  return `サーバーがエラーを返しました（HTTP ${res.status}）`
+}

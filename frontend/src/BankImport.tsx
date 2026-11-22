@@ -1,5 +1,5 @@
 import { useEffect, useState, type ChangeEvent } from "react"
-import { API_URL, errorMessage, getJson } from "./api"
+import { detailText, errorMessage, getJson, postJson } from "./api"
 
 type Account = {
   name: string
@@ -32,18 +32,12 @@ function decodeCsv(buffer: ArrayBuffer): string {
   }
 }
 
-async function errorText(res: Response): Promise<string> {
-  const body = await res.json()
-  const detail = body.detail
-  return typeof detail === "string"
-    ? detail
-    : detail.map((d: { msg: string }) => d.msg).join(" / ")
-}
-
 export default function BankImport({ onImported }: Props) {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [drafts, setDrafts] = useState<BankDraft[]>([])
   const [message, setMessage] = useState<string | null>(null)
+  // 送信中はボタンを押せないようにする
+  const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     getJson<Account[]>("/accounts")
@@ -57,19 +51,21 @@ export default function BankImport({ onImported }: Props) {
     if (!file) return
     setMessage(null)
 
-    const csvText = decodeCsv(await file.arrayBuffer())
-    const res = await fetch(`${API_URL}/bank-import/preview`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ csv_text: csvText }),
-    })
-    if (res.ok) {
-      setDrafts(await res.json())
-    } else {
+    try {
+      const csvText = decodeCsv(await file.arrayBuffer())
+      const res = await postJson("/bank-import/preview", { csv_text: csvText })
+      if (res.ok) {
+        setDrafts(await res.json())
+      } else {
+        setDrafts([])
+        setMessage(`読み込めませんでした：${await detailText(res)}`)
+      }
+    } catch (e) {
       setDrafts([])
-      setMessage(`読み込めませんでした：${await errorText(res)}`)
+      setMessage(`読み込めませんでした：${errorMessage(e)}`)
+    } finally {
+      input.value = "" // 同じファイルをもう一度選べるようにする
     }
-    input.value = "" // 同じファイルをもう一度選べるようにする
   }
 
   function updateAccount(index: number, account: string) {
@@ -80,17 +76,20 @@ export default function BankImport({ onImported }: Props) {
   const allSelected = targets.length > 0 && targets.every((d) => d.account)
 
   async function handleImport() {
-    const res = await fetch(`${API_URL}/bank-import`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ drafts: targets }),
-    })
-    if (res.ok) {
-      setMessage(`${targets.length}件の仕訳を登録しました`)
-      setDrafts([])
-      onImported()
-    } else {
-      setMessage(`登録できませんでした：${await errorText(res)}`)
+    setSubmitting(true)
+    try {
+      const res = await postJson("/bank-import", { drafts: targets })
+      if (res.ok) {
+        setMessage(`${targets.length}件の仕訳を登録しました`)
+        setDrafts([])
+        onImported()
+      } else {
+        setMessage(`登録できませんでした：${await detailText(res)}`)
+      }
+    } catch (e) {
+      setMessage(`登録できませんでした：${errorMessage(e)}`)
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -98,7 +97,7 @@ export default function BankImport({ onImported }: Props) {
     <div>
       <h2>銀行明細の取り込み</h2>
       <p>
-        「日付,摘要,出金,入金」の形式のCSVを選んでください。
+        銀行の入出金明細のCSVを選んでください（日付・摘要・金額の列が必要です）。
         <a href="/sample-bank.csv" download>サンプルCSVをダウンロード</a>
       </p>
       <input type="file" accept=".csv" onChange={handleFile} />
@@ -143,8 +142,8 @@ export default function BankImport({ onImported }: Props) {
               ))}
             </tbody>
           </table>
-          <button onClick={handleImport} disabled={!allSelected}>
-            {targets.length}件を仕訳として登録
+          <button onClick={handleImport} disabled={!allSelected || submitting}>
+            {submitting ? "送信中..." : `${targets.length}件を仕訳として登録`}
           </button>
         </>
       )}

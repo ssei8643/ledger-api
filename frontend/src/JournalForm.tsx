@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react"
-import { API_URL, errorMessage, getJson } from "./api"
+import { detailText, errorMessage, getJson, postJson } from "./api"
 
 type Side = "debit" | "credit"
 
@@ -33,6 +33,8 @@ export default function JournalForm({ onCreated }: Props) {
   const [description, setDescription] = useState("")
   const [lines, setLines] = useState<LineInput[]>([emptyLine("debit"), emptyLine("credit")])
   const [message, setMessage] = useState<string | null>(null)
+  // 送信中は登録ボタンを押せないようにする（サーバーの起動待ちで二重登録しないため）
+  const [submitting, setSubmitting] = useState(false)
   const [accounts, setAccounts] = useState<Account[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -91,26 +93,27 @@ export default function JournalForm({ onCreated }: Props) {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setMessage(null)
+    setSubmitting(true)
 
-    const res = await fetch(`${API_URL}/journal-entries`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ entry_date: entryDate, description, lines }),
-    })
-
-    if (res.ok) {
-      setMessage("登録しました")
-      setDescription("")
-      setLines([emptyLine("debit"), emptyLine("credit")])
-      onCreated()
-    } else {
-      const body = await res.json()
-      const detail = body.detail
-      const text =
-        typeof detail === "string"
-          ? detail
-          : detail.map((d: { msg: string }) => d.msg).join(" / ")
-      setMessage(`登録できませんでした：${text}`)
+    try {
+      const res = await postJson("/journal-entries", {
+        entry_date: entryDate,
+        description,
+        lines,
+      })
+      if (res.ok) {
+        setMessage("登録しました")
+        setDescription("")
+        setLines([emptyLine("debit"), emptyLine("credit")])
+        onCreated()
+      } else {
+        setMessage(`登録できませんでした：${await detailText(res)}`)
+      }
+    } catch (e) {
+      // サーバーに接続できなかったとき（休眠中など）
+      setMessage(`登録できませんでした：${errorMessage(e)}`)
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -176,7 +179,9 @@ export default function JournalForm({ onCreated }: Props) {
         {isBalanced ? "（一致）" : "（不一致）"}
       </p>
 
-      <button type="submit" disabled={!isBalanced || !allSelected}>登録</button>
+      <button type="submit" disabled={!isBalanced || !allSelected || submitting}>
+        {submitting ? "送信中..." : "登録"}
+      </button>
       {message && <p>{message}</p>}
     </form>
   )

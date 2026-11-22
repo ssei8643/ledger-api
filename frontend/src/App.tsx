@@ -3,7 +3,7 @@ import { useEffect, useState } from "react"
 import JournalForm from "./JournalForm"
 import BankImport from "./BankImport"
 import FinancialStatements from "./FinancialStatements"
-import { API_URL, errorMessage, getJson } from "./api"
+import { API_URL, detailText, errorMessage, getJson } from "./api"
 
 
 type TrialBalanceRow = {
@@ -56,8 +56,7 @@ function App() {
       if (res.ok) {
         refreshAll()
       } else {
-        const body = await res.json()
-        alert(body.detail)
+        alert(await detailText(res))
       }
     } catch (e) {
       alert(errorMessage(e))

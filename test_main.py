@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from bank_csv import BankCsvError, parse_bank_csv, parse_date
 from main import (
     Base,
     JournalEntry,
@@ -439,6 +441,21 @@ def test_同じ明細は二重に取り込めない(client):
     assert client.post("/bank-import", json={"drafts": drafts}).status_code == 409
 
 
+def test_取り込みが同時に届いても二重には登録されず409が返る(client, monkeypatch):
+    drafts = preview_drafts(client)
+    drafts[2]["account"] = "消耗品費"
+    client.post("/bank-import", json={"drafts": drafts})
+
+    # 登録直前の確認（取り込み済みの件数）を常に0にして、別のリクエストに
+    # 先を越された状況を再現する。データベースの一意制約で弾かれるはず
+    monkeypatch.setattr(Session, "scalar", lambda self, *args, **kwargs: 0)
+    res = client.post("/bank-import", json={"drafts": drafts})
+    monkeypatch.undo()
+
+    assert res.status_code == 409
+    assert len(client.get("/journal-entries").json()) == 3
+
+
 def test_勘定科目が未選択の明細は取り込めない(client):
     drafts = preview_drafts(client)
     assert client.post("/bank-import", json={"drafts": drafts}).status_code == 422
@@ -450,6 +467,107 @@ def test_相手科目に普通預金を選んだ明細は取り込めない(clie
     res = client.post("/bank-import", json={"drafts": drafts})
     assert res.status_code == 422
     assert client.get("/journal-entries").json() == []
+
+
+# ===== 銀行ごとのCSVの形式の違い =====
+@pytest.mark.parametrize(
+    "text",
+    ["2026-12-01", "2026/12/01", "20261201", "2026.12.01", "2026年12月1日", "2026/12/1"],
+)
+def test_いろいろな日付の書き方を読み取れる(text):
+    assert parse_date(text) == date(2026, 12, 1)
+
+
+def test_列名や並び順が違うCSVも読み取れる():
+    # 「取引日・入金・出金・備考」の順で、日付は区切りなし、新しい順に並んでいる
+    rows = parse_bank_csv(
+        "取引日,入金,出金,備考\n"
+        "20261210,,50000,ｼｮｳﾃﾝ\n"
+        "20261202,60000,,ﾜｲ ATM\n"
+    )
+    assert [(r.entry_date.day, r.direction, r.amount) for r in rows] == [
+        (2, "in", 60000),
+        (10, "out", 50000),
+    ]
+
+
+def test_入出金が1列でマイナスが出金のCSVも読み取れる():
+    rows = parse_bank_csv(
+        '日付,摘要,入出金（円）\n'
+        '2026/12/01,ﾌﾘｺﾐ ｴｰｼｬ,"88,000"\n'
+        '2026/12/03,ドコモ,"−5,500"\n'
+    )
+    assert [(r.direction, r.amount) for r in rows] == [("in", 88000), ("out", 5500)]
+
+
+def test_金額の空欄やハイフンは0として扱い追加摘要はつなげる():
+    rows = parse_bank_csv(
+        '勘定日,摘要,追加摘要,お引出し,お預入れ\n'
+        '2026年12月1日,ﾌﾘｺﾐ,ｴｰｼｬ,-,"1,000"\n'
+    )
+    assert rows[0].direction == "in"
+    assert rows[0].amount == 1000
+    assert rows[0].description == "ﾌﾘｺﾐ ｴｰｼｬ"
+
+
+def test_読めない行は行番号つきのエラーになる():
+    with pytest.raises(BankCsvError, match="2行目"):
+        parse_bank_csv("日付,摘要,出金,入金\n2026-13-01,存在しない日付,100,\n")
+
+
+# ===== samples/ フォルダのサンプルCSV（各銀行の形式を参考に作った架空のデータ） =====
+SAMPLES_DIR = Path(__file__).parent / "samples"
+
+
+def read_sample(name: str) -> str:
+    # 画面と同じく、UTF-8で読めなければShift_JISで読み直す
+    raw = (SAMPLES_DIR / name).read_bytes()
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("shift_jis")
+
+
+@pytest.mark.parametrize(
+    "name, count",
+    [
+        ("sample1_newest_first_hankaku.csv", 7),
+        ("sample2_single_column_signed.csv", 6),
+        ("sample3_shiftjis_hyphen_kanjidate.csv", 5),
+        ("sample4_current_format.csv", 6),
+    ],
+)
+def test_サンプルCSVはすべて読み取れて日付順に並ぶ(name, count):
+    rows = parse_bank_csv(read_sample(name))
+    assert len(rows) == count
+    assert rows == sorted(rows, key=lambda r: r.entry_date)
+
+
+def preview_sample(client, name):
+    csv_text = read_sample(name)
+    return client.post("/bank-import/preview", json={"csv_text": csv_text}).json()
+
+
+def test_半角カナの振込手数料も支払手数料と推測され推測できないものは空欄のまま(client):
+    accounts = {
+        d["description"]: d["account"]
+        for d in preview_sample(client, "sample1_newest_first_hankaku.csv")
+    }
+    assert accounts["ﾌﾘｺﾐﾃｽｳﾘﾖｳ"] == "支払手数料"
+    assert accounts["ｺﾝﾋﾞﾆ ﾏﾙﾏﾙﾃﾝ"] is None
+
+
+def test_同じ日に同じ内容の明細が2件あっても別々の明細として扱われる(client):
+    drafts = preview_sample(client, "sample4_current_format.csv")
+    copies = [d for d in drafts if d["description"] == "コピー用紙"]
+    assert len(copies) == 2
+    assert copies[0]["import_key"] != copies[1]["import_key"]
+
+
+def test_ATMは入金なら事業主借と推測される(client):
+    csv_text = "取引日,入金,出金,備考\n20261202,60000,,ﾜｲ ATM\n20261203,,30000,ATM ｼｭｯｷﾝ\n"
+    drafts = client.post("/bank-import/preview", json={"csv_text": csv_text}).json()
+    assert [d["account"] for d in drafts] == ["事業主借", "事業主貸"]
 
 
 def test_CSVの見出しが違うとエラーになる(client):
