@@ -6,6 +6,8 @@ services:
     environment:
       DEMO_MODE: "1"
       FRONTEND_ORIGIN: http://localhost:8080
+      # AIによる科目の推測を使う場合だけ、起動する前にPowerShellで $env:ANTHROPIC_API_KEY を設定しておく
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes:
       - ledger-data:/app/data
 

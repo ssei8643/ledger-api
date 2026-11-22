@@ -13,6 +13,8 @@ type BankDraft = {
   direction: "in" | "out"
   amount: number
   account: string | null
+  // 誰が推測した科目か（rule：キーワードのルール、ai：AI、null：推測なし・人が選んだ）
+  suggested_by: "rule" | "ai" | null
   already_imported: boolean
 }
 
@@ -38,6 +40,8 @@ export default function BankImport({ onImported }: Props) {
   const [message, setMessage] = useState<string | null>(null)
   // 送信中はボタンを押せないようにする
   const [submitting, setSubmitting] = useState(false)
+  // 読み込み中の表示（AIで科目を推測するときは数秒かかることがある）
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     getJson<Account[]>("/accounts")
@@ -50,6 +54,7 @@ export default function BankImport({ onImported }: Props) {
     const file = input.files?.[0]
     if (!file) return
     setMessage(null)
+    setLoading(true)
 
     try {
       const csvText = decodeCsv(await file.arrayBuffer())
@@ -65,15 +70,20 @@ export default function BankImport({ onImported }: Props) {
       setMessage(`読み込めませんでした：${errorMessage(e)}`)
     } finally {
       input.value = "" // 同じファイルをもう一度選べるようにする
+      setLoading(false)
     }
   }
 
   function updateAccount(index: number, account: string) {
-    setDrafts(drafts.map((d, i) => (i === index ? { ...d, account: account || null } : d)))
+    // 人が選び直した科目は、もうAIの推測ではないので印を消す
+    setDrafts(
+      drafts.map((d, i) => (i === index ? { ...d, account: account || null, suggested_by: null } : d)),
+    )
   }
 
   const targets = drafts.filter((d) => !d.already_imported)
   const allSelected = targets.length > 0 && targets.every((d) => d.account)
+  const hasAiSuggestion = targets.some((d) => d.suggested_by === "ai")
 
   async function handleImport() {
     setSubmitting(true)
@@ -100,10 +110,17 @@ export default function BankImport({ onImported }: Props) {
         銀行の入出金明細のCSVを選んでください（日付・摘要・金額の列が必要です）。
         <a href="/sample-bank.csv" download>サンプルCSVをダウンロード</a>
       </p>
-      <input type="file" accept=".csv" onChange={handleFile} />
+      <input type="file" accept=".csv" onChange={handleFile} disabled={loading} />
+      {loading && <p>読み込み中...（科目の推測に数秒かかることがあります）</p>}
 
       {drafts.length > 0 && (
         <>
+          {hasAiSuggestion && (
+            <p>
+              「AI推測」の科目は、キーワードで判断できなかった明細をAIが摘要から推測したものです。
+              登録する前に必ず確認してください（AIに送るのは摘要と入出金の区別だけです）。
+            </p>
+          )}
           <table>
             <thead>
               <tr>
@@ -137,6 +154,7 @@ export default function BankImport({ onImported }: Props) {
                         ))}
                       </select>
                     )}
+                    {!d.already_imported && d.suggested_by === "ai" && <span> AI推測</span>}
                   </td>
                 </tr>
               ))}
