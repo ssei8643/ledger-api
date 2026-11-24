@@ -28,8 +28,15 @@ function emptyLine(side: Side): LineInput {
   return { account: "", side, amount: 0 }
 }
 
+// 今日の日付（YYYY-MM-DD）。toISOString() はUTCなので、日本時間の0時〜9時は前日になってしまう
+function today(): string {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
 export default function JournalForm({ onCreated }: Props) {
-  const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10))
+  const [entryDate, setEntryDate] = useState(today())
   const [description, setDescription] = useState("")
   const [lines, setLines] = useState<LineInput[]>([emptyLine("debit"), emptyLine("credit")])
   const [message, setMessage] = useState<string | null>(null)
