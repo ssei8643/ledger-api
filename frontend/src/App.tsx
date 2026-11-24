@@ -71,7 +71,10 @@ function App() {
     <div>
       <h1>記帳アプリ</h1>
 
-      <button onClick={loadDemoData}>サンプルデータを読み込む</button>
+      {/* 仕訳が1件もないときだけ表示する（デモ環境では起動時にサンプルデータが入るため） */}
+{data && data.debit_total === 0 && (
+  <button onClick={loadDemoData}>サンプルデータを読み込む</button>
+)}
 
       <JournalForm onCreated={refreshAll} />
       <BankImport onImported={refreshAll} />
