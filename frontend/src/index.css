@@ -109,3 +109,9 @@ code {
   padding: 4px 8px;
   background: var(--code-bg);
 }
+
+/* 金額は右揃えにして、桁をそろえる */
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
