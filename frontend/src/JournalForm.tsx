@@ -80,8 +80,8 @@ export default function JournalForm({ onCreated }: Props) {
   // 同じ科目を借方と貸方の両方に使うことはできない（サーバーでも拒否される）
   const debitAccounts = lines.filter((l) => l.side === "debit").map((l) => l.account)
   const hasSameAccount = lines.some(
-  (l) => l.side === "credit" && l.account !== "" && debitAccounts.includes(l.account),
-)
+      (l) => l.side === "credit" && l.account !== "" && debitAccounts.includes(l.account),
+  )
 
   function updateLine(index: number, changes: Partial<LineInput>) {
     setLines(lines.map((l, i) => (i === index ? { ...l, ...changes } : l)))
@@ -182,11 +182,10 @@ export default function JournalForm({ onCreated }: Props) {
       <p>
         借方合計 {debitTotal.toLocaleString()} ／ 貸方合計 {creditTotal.toLocaleString()}
         {isBalanced ? "（一致）" : "（不一致）"}
-        <button type="submit" disabled={!isBalanced || !allSelected || hasSameAccount || submitting}></button>
       </p>
       {hasSameAccount && <p>同じ勘定科目を借方と貸方の両方に使うことはできません</p>}
 
-      <button type="submit" disabled={!isBalanced || !allSelected || submitting}>
+      <button type="submit" disabled={!isBalanced || !allSelected || hasSameAccount || submitting}>
         {submitting ? "送信中..." : "登録"}
       </button>
       {message && <p>{message}</p>}
