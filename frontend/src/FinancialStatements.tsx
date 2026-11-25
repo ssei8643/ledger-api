@@ -67,7 +67,7 @@ export default function FinancialStatements({ refreshKey }: Props) {
         <tbody>
           <tr><th colSpan={2}>収益</th></tr>
           <ItemRows items={pl.revenues} />
-          <tr><td className="num">収益合計</td><td>{pl.total_revenue.toLocaleString()}</td></tr>
+         <tr><td>収益合計</td><td className="num">{pl.total_revenue.toLocaleString()}</td></tr>
           <tr><th colSpan={2}>費用</th></tr>
           <ItemRows items={pl.expenses} />
           <tr><td>費用合計</td><td className="num">{pl.total_expense.toLocaleString()}</td></tr>

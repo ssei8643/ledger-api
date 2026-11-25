@@ -98,11 +98,11 @@ function App() {
               <tr key={r.account}>
                 <td className="num">{yen(r.debit_total)}</td>
                 <td className="num">{yen(r.debit_balance)}</td>
-                <td className="num">{r.account}</td>
-                <td className="num">{r.category}</td>
+                <td>{r.account}</td>
+                <td>{r.category}</td>
                 <td className="num">{yen(r.credit_balance)}</td>
                 <td className="num">{yen(r.credit_total)}</td>
-                <td className="num">{r.warning ?? ""}</td>
+                <td>{r.warning ?? ""}</td>
               </tr>
             ))}
           </tbody>
@@ -113,7 +113,7 @@ function App() {
               <td colSpan={2}>合計</td>
               <td className="num">{data.credit_balance_total.toLocaleString()}</td>
               <td className="num">{data.credit_total.toLocaleString()}</td>
-              <td className="num">{data.is_balanced ? "一致" : "不一致"}</td>
+              <td>{data.is_balanced ? "一致" : "不一致"}</td>
             </tr>
           </tfoot>
         </table>
