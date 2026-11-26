@@ -35,7 +35,8 @@ export async function detailText(res: Response): Promise<string> {
     const detail = body.detail
     if (typeof detail === "string") return detail
     if (Array.isArray(detail)) {
-      return detail.map((d: { msg: string }) => d.msg).join(" / ")
+      // Pydanticは、バリデーターで投げたエラーの先頭に "Value error, " を付けるので取り除く
+      return detail.map((d: { msg: string }) => d.msg.replace(/^Value error, /, "")).join(" / ")
     }
   } catch {
     // JSONではない応答（起動中のサーバーが返すHTMLなど）は、下の文言にする
