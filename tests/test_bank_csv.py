@@ -47,6 +47,11 @@ def test_読めない行は行番号つきのエラーになる():
         parse_bank_csv("日付,摘要,出金,入金\n2026-13-01,存在しない日付,100,\n")
 
 
+def test_摘要が長すぎる行は行番号つきのエラーになる():
+    with pytest.raises(BankCsvError, match="2行目の摘要が長すぎます"):
+        parse_bank_csv("日付,摘要,出金,入金\n2026-12-01," + "あ" * 201 + ",100,\n")
+
+
 # ===== samples/ フォルダのサンプルCSV =====
 @pytest.mark.parametrize(
     "name, count",

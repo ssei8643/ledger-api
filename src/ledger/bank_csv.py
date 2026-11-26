@@ -11,6 +11,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal
+from ledger.limits import DESCRIPTION_MAX_LENGTH
 
 
 class BankCsvError(ValueError):
@@ -122,6 +123,10 @@ def parse_bank_csv(text: str) -> list[BankRow]:
 
         parts = [_cell(row, desc_col).strip(), _cell(row, extra_col).strip()]
         description = " ".join(p for p in parts if p)
+        if len(description) > DESCRIPTION_MAX_LENGTH:
+            raise BankCsvError(
+                f"{row_no}行目の摘要が長すぎます（{DESCRIPTION_MAX_LENGTH}文字まで）"
+            )
 
         result.append(BankRow(entry_date, description, direction, amount))
 

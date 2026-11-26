@@ -1,9 +1,16 @@
 """APIのリクエスト・レスポンスの形式（Pydanticのモデル）"""
 
 from datetime import date
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+
+from ledger.limits import DESCRIPTION_MAX_LENGTH
+
+# 仕訳の摘要：前後の空白を取り除いたうえで、1文字以上・DBの列の長さ以内
+Description = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=DESCRIPTION_MAX_LENGTH)
+]
 
 
 # ===== 勘定科目 =====
@@ -22,7 +29,7 @@ class JournalLineIn(BaseModel):
 
 class JournalEntryCreate(BaseModel):
     entry_date: date
-    description: str
+    description: Description
     lines: list[JournalLineIn] = Field(min_length=2)
 
     @model_validator(mode="after")
@@ -155,7 +162,7 @@ class BankImportRequest(BaseModel):
 class BankDraft(BaseModel):
     import_key: str
     entry_date: date
-    description: str
+    description: str = Field(max_length=DESCRIPTION_MAX_LENGTH)
     direction: Literal["in", "out"]
     amount: int = Field(gt=0)
     account: str | None = None
