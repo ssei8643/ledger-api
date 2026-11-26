@@ -35,7 +35,7 @@ function ItemRows({ items }: { items: Item[] }) {
       {items.map((i) => (
         <tr key={i.account}>
           <td>{i.account}</td>
-          <td>{i.amount.toLocaleString()}</td>
+          <td className="num">{i.amount.toLocaleString()}</td>
         </tr>
       ))}
     </>
@@ -67,11 +67,11 @@ export default function FinancialStatements({ refreshKey }: Props) {
         <tbody>
           <tr><th colSpan={2}>収益</th></tr>
           <ItemRows items={pl.revenues} />
-          <tr><td>収益合計</td><td>{pl.total_revenue.toLocaleString()}</td></tr>
+         <tr><td>収益合計</td><td className="num">{pl.total_revenue.toLocaleString()}</td></tr>
           <tr><th colSpan={2}>費用</th></tr>
           <ItemRows items={pl.expenses} />
-          <tr><td>費用合計</td><td>{pl.total_expense.toLocaleString()}</td></tr>
-          <tr><th>当期純利益</th><th>{pl.net_income.toLocaleString()}</th></tr>
+          <tr><td>費用合計</td><td className="num">{pl.total_expense.toLocaleString()}</td></tr>
+          <tr><th>当期純利益</th><th className="num">{pl.net_income.toLocaleString()}</th></tr>
         </tbody>
       </table>
 
@@ -80,13 +80,13 @@ export default function FinancialStatements({ refreshKey }: Props) {
         <tbody>
           <tr><th colSpan={2}>資産</th></tr>
           <ItemRows items={bs.assets} />
-          <tr><th>資産合計</th><th>{bs.total_assets.toLocaleString()}</th></tr>
+          <tr><th>資産合計</th><th className="num">{bs.total_assets.toLocaleString()}</th></tr>
           <tr><th colSpan={2}>負債</th></tr>
           <ItemRows items={bs.liabilities} />
           <tr><th colSpan={2}>純資産</th></tr>
           <ItemRows items={bs.equity} />
-          <tr><td>当期純利益</td><td>{bs.net_income.toLocaleString()}</td></tr>
-          <tr><th>負債・純資産合計</th><th>{bs.total_liabilities_and_equity.toLocaleString()}</th></tr>
+          <tr><td>当期純利益</td><td className="num">{bs.net_income.toLocaleString()}</td></tr>
+          <tr><th>負債・純資産合計</th><th className="num">{bs.total_liabilities_and_equity.toLocaleString()}</th></tr>
         </tbody>
       </table>
       <p>{bs.is_balanced ? "資産と負債・純資産の合計は一致しています" : "資産と負債・純資産の合計が一致していません"}</p>

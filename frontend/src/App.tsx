@@ -99,23 +99,23 @@ function App() {
           <tbody>
             {data.rows.map((r) => (
               <tr key={r.account}>
-                <td>{yen(r.debit_total)}</td>
-                <td>{yen(r.debit_balance)}</td>
+                <td className="num">{yen(r.debit_total)}</td>
+                <td className="num">{yen(r.debit_balance)}</td>
                 <td>{r.account}</td>
                 <td>{r.category}</td>
-                <td>{yen(r.credit_balance)}</td>
-                <td>{yen(r.credit_total)}</td>
+                <td className="num">{yen(r.credit_balance)}</td>
+                <td className="num">{yen(r.credit_total)}</td>
                 <td>{r.warning ?? ""}</td>
               </tr>
             ))}
           </tbody>
           <tfoot>
             <tr>
-              <td>{data.debit_total.toLocaleString()}</td>
-              <td>{data.debit_balance_total.toLocaleString()}</td>
+              <td className="num">{data.debit_total.toLocaleString()}</td>
+              <td className="num">{data.debit_balance_total.toLocaleString()}</td>
               <td colSpan={2}>合計</td>
-              <td>{data.credit_balance_total.toLocaleString()}</td>
-              <td>{data.credit_total.toLocaleString()}</td>
+              <td className="num">{data.credit_balance_total.toLocaleString()}</td>
+              <td className="num">{data.credit_total.toLocaleString()}</td>
               <td>{data.is_balanced ? "一致" : "不一致"}</td>
             </tr>
           </tfoot>

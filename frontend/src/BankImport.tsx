@@ -136,8 +136,8 @@ export default function BankImport({ onImported }: Props) {
                 <tr key={d.import_key}>
                   <td>{d.entry_date}</td>
                   <td>{d.description}</td>
-                  <td>{d.direction === "out" ? d.amount.toLocaleString() : ""}</td>
-                  <td>{d.direction === "in" ? d.amount.toLocaleString() : ""}</td>
+                  <td className="num">{d.direction === "out" ? d.amount.toLocaleString() : ""}</td>
+                  <td className="num">{d.direction === "in" ? d.amount.toLocaleString() : ""}</td>
                   <td>
                     {d.already_imported ? (
                       "取り込み済み"
