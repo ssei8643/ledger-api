@@ -70,6 +70,14 @@ def test_相手科目に普通預金を選んだ明細は取り込めない(clie
     assert client.get("/journal-entries").json() == []
 
 
+def test_摘要が空の明細は取り込めない(client):
+    drafts = preview_drafts(client)
+    drafts[0]["description"] = "  "
+    res = client.post("/bank-import", json={"drafts": drafts})
+    assert res.status_code == 422
+    assert client.get("/journal-entries").json() == []
+
+
 # ===== samples/ のCSVを使った取り込み =====
 def preview_sample(client, name):
     csv_text = read_sample(name)

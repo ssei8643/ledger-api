@@ -79,6 +79,23 @@ def test_同じ勘定科目を借方と貸方の両方に使う仕訳は拒否�
     assert client.get("/journal-entries").json() == []
 
 
+def test_摘要が200文字を超える仕訳は拒否され保存もされない(client):
+    res = client.post("/journal-entries", json={**SIMPLE_ENTRY, "description": "あ" * 201})
+    assert res.status_code == 422
+    assert client.get("/journal-entries").json() == []
+
+
+def test_摘要がちょうど200文字の仕訳は登録できる(client):
+    res = client.post("/journal-entries", json={**SIMPLE_ENTRY, "description": "あ" * 200})
+    assert res.status_code == 201
+    assert res.json()["description"] == "あ" * 200
+
+
+def test_摘要が空白だけの仕訳は拒否される(client):
+    res = client.post("/journal-entries", json={**SIMPLE_ENTRY, "description": "   "})
+    assert res.status_code == 422
+
+
 # ===== 訂正仕訳（取消） =====
 REVERSE_REQUEST = {"entry_date": "2026-10-28", "reason": "金額誤り"}
 

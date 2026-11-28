@@ -6,6 +6,7 @@ from sqlalchemy import CheckConstraint, Date, ForeignKey, String, event
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from ledger.db import Base
+from ledger.limits import DESCRIPTION_MAX_LENGTH
 
 
 class Account(Base):
@@ -27,7 +28,7 @@ class JournalEntry(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     entry_date: Mapped[date] = mapped_column(Date)
-    description: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(String(DESCRIPTION_MAX_LENGTH))
     reverses_id: Mapped[int | None] = mapped_column(
         ForeignKey("journal_entries.id"), unique=True, default=None
     )

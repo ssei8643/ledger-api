@@ -147,6 +147,7 @@ export default function JournalForm({ onCreated }: Props) {
         <input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} />
         <input
           placeholder="摘要"
+          maxLength={200}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
         />
