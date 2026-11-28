@@ -11,6 +11,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal
+
 from ledger.limits import DESCRIPTION_MAX_LENGTH
 
 # 銀行CSVで摘要が空の行に使う摘要（仕訳の摘要は必ず1文字以上にそろえる）

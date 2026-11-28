@@ -6,7 +6,6 @@ from sqlalchemy import CheckConstraint, Date, ForeignKey, String, event
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from ledger.db import Base
-
 from ledger.limits import DESCRIPTION_MAX_LENGTH
 
 
