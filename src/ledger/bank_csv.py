@@ -13,6 +13,9 @@ from datetime import date
 from typing import Literal
 from ledger.limits import DESCRIPTION_MAX_LENGTH
 
+# 銀行CSVで摘要が空の行に使う摘要（仕訳の摘要は必ず1文字以上にそろえる）
+EMPTY_DESCRIPTION = "（摘要なし）"
+
 
 class BankCsvError(ValueError):
     """CSVを読み取れなかったときのエラー（メッセージはそのまま画面に出す）"""
@@ -122,7 +125,7 @@ def parse_bank_csv(text: str) -> list[BankRow]:
             raise BankCsvError(f"{row_no}行目は出金か入金のどちらか一方を入力してください")
 
         parts = [_cell(row, desc_col).strip(), _cell(row, extra_col).strip()]
-        description = " ".join(p for p in parts if p)
+        description = " ".join(p for p in parts if p) or EMPTY_DESCRIPTION
         if len(description) > DESCRIPTION_MAX_LENGTH:
             raise BankCsvError(
                 f"{row_no}行目の摘要が長すぎます（{DESCRIPTION_MAX_LENGTH}文字まで）"

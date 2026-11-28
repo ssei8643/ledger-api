@@ -162,7 +162,7 @@ class BankImportRequest(BaseModel):
 class BankDraft(BaseModel):
     import_key: str
     entry_date: date
-    description: str = Field(max_length=DESCRIPTION_MAX_LENGTH)
+    description: Description
     direction: Literal["in", "out"]
     amount: int = Field(gt=0)
     account: str | None = None

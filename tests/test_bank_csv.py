@@ -52,6 +52,11 @@ def test_摘要が長すぎる行は行番号つきのエラーになる():
         parse_bank_csv("日付,摘要,出金,入金\n2026-12-01," + "あ" * 201 + ",100,\n")
 
 
+def test_摘要が空の行は摘要なしとして読み取る():
+    rows = parse_bank_csv("日付,摘要,出金,入金\n2026-12-01,,100,\n")
+    assert rows[0].description == "（摘要なし）"
+
+
 # ===== samples/ フォルダのサンプルCSV =====
 @pytest.mark.parametrize(
     "name, count",
